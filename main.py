@@ -1,10 +1,9 @@
-import ctypes
 import json
 import os
+import shutil
 import sys
 import uuid
 import time
-from ctypes import wintypes
 from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkfont
@@ -28,9 +27,6 @@ class RelatorioFotograficoApp:
         self.root.geometry("1240x760")
         self.root.minsize(1100, 700)
         self.root.state("zoomed")
-        self._drop_proc = None
-        self._old_wnd_proc = None
-
         IMAGE_DIR.mkdir(exist_ok=True)
         self.data = {
             "condominios": {},
@@ -169,7 +165,7 @@ class RelatorioFotograficoApp:
         self.build_center_panel()
         self.build_right_panel()
         self.root.update_idletasks()
-        self.register_file_drop(self.drop_zone_label, self.on_files_dropped)
+        self.register_file_drop_targets()
 
     def build_left_panel(self):
         left = ttk.Frame(self.main_frame, width=250)
@@ -444,56 +440,61 @@ class RelatorioFotograficoApp:
             foreground=[("active", "white"), ("pressed", "white")],
         )
 
-    def register_file_drop(self, widget, callback):
-        if sys.platform != "win32":
-            return
+    def register_file_drop_targets(self):
         try:
-            widget.update_idletasks()
-            hwnd = widget.winfo_id()
-            user32 = ctypes.windll.user32
-            shell32 = ctypes.windll.shell32
-            shell32.DragAcceptFiles(hwnd, True)
-            GWL_WNDPROC = -4
-            WNDPROC = ctypes.WINFUNCTYPE(
-                wintypes.LRESULT,
-                wintypes.HWND,
-                wintypes.UINT,
-                wintypes.WPARAM,
-                wintypes.LPARAM,
+            from tkinterdnd2 import DND_FILES
+        except ImportError:
+            messagebox.showwarning(
+                "Arrastar arquivos",
+                "O pacote 'tkinterdnd2' não está instalado ou está desatualizado",
+                parent=self.root,
             )
+            return
+        if not hasattr(self.drop_zone_label, "drop_target_register"):
+            messagebox.showwarning(
+                "Arrastar arquivos",
+                "Arrastar arquivos requer iniciar o programa com suporte a DnD.\n"
+                "Reinstale tkinterdnd2 e abra o app novamente.",
+                parent=self.root,
+            )
+            return
+        self.drop_zone_label.drop_target_register(DND_FILES)
+        self.drop_zone_label.dnd_bind("<<Drop>>", self._on_dnd_drop)
 
-            def _wnd_proc(hwnd, msg, wparam, lparam):
-                if msg == 0x233:
-                    count = shell32.DragQueryFileW(wparam, 0xFFFFFFFF, None, 0)
-                    files = []
-                    buf = ctypes.create_unicode_buffer(260)
-                    for i in range(count):
-                        shell32.DragQueryFileW(wparam, i, buf, 260)
-                        files.append(buf.value)
-                    shell32.DragFinish(wparam)
-                    self.root.after(10, lambda: callback(files))
-                    return 0
-                return user32.CallWindowProcW(self._old_wnd_proc, hwnd, msg, wparam, lparam)
+    def _on_dnd_drop(self, event):
+        paths = [str(path) for path in self.root.tk.splitlist(event.data)]
+        self.on_files_dropped(paths)
 
-            self._drop_proc = WNDPROC(_wnd_proc)
-            if ctypes.sizeof(ctypes.c_void_p) == 8:
-                self._old_wnd_proc = user32.SetWindowLongPtrW(hwnd, GWL_WNDPROC, self._drop_proc)
-            else:
-                self._old_wnd_proc = user32.SetWindowLongW(hwnd, GWL_WNDPROC, self._drop_proc)
-        except Exception:
-            pass
+    def import_image_paths(self, file_paths):
+        allowed = {".png", ".jpg", ".jpeg", ".bmp", ".gif"}
+        imported = []
+        for raw_path in file_paths:
+            source = Path(raw_path)
+            if not source.is_file():
+                continue
+            suffix = source.suffix.lower()
+            if suffix not in allowed:
+                continue
+            try:
+                if source.parent.resolve() == IMAGE_DIR.resolve():
+                    imported.append(str(source.resolve()))
+                    continue
+                destination = IMAGE_DIR / f"{source.stem}_{uuid.uuid4().hex[:8]}{suffix}"
+                shutil.copy2(source, destination)
+                imported.append(str(destination.resolve()))
+            except OSError:
+                continue
+        return imported
 
     def on_files_dropped(self, file_paths):
         if not self.current_cond:
             messagebox.showwarning("Aviso", "Selecione um condomínio antes de soltar arquivos.")
             return
-        valid_paths = [
-            p for p in file_paths if Path(p).suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp", ".gif")
-        ]
+        valid_paths = self.import_image_paths(file_paths)
         if not valid_paths:
             messagebox.showwarning(
                 "Aviso",
-                "Nenhuma imagem válida encontrada nos arquivos arrastados."
+                "Nenhuma imagem válida encontrada nos arquivos arrastados.",
             )
             return
         self.add_photos(valid_paths)
@@ -818,7 +819,9 @@ class RelatorioFotograficoApp:
             filetypes=[("Imagens", "*.png;*.jpg;*.jpeg;*.bmp;*.gif"), ("Todos os arquivos", "*")],
         )
         if file_paths:
-            self.add_photos(file_paths)
+            imported = self.import_image_paths(file_paths)
+            if imported:
+                self.add_photos(imported)
 
     def add_photos(self, file_paths):
         section = self.ensure_current_section()
@@ -840,8 +843,14 @@ class RelatorioFotograficoApp:
         self.save_data()
         self.refresh_tree()
         if last_photo_id:
-            self.tree.selection_set(last_photo_id)
-            self.load_photo_preview(last_photo_id)
+            self._handling_tree_select = True
+            try:
+                self.tree.selection_set(last_photo_id)
+                self.tree.focus(last_photo_id)
+                self.tree.see(last_photo_id)
+                self.load_photo_preview(last_photo_id)
+            finally:
+                self._handling_tree_select = False
         added_orders = []
         for photo_id in added_photo_ids:
             photo = self.find_photo_by_id(photo_id)
@@ -1076,6 +1085,11 @@ class RelatorioFotograficoApp:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    try:
+        from tkinterdnd2 import TkinterDnD
+
+        root = TkinterDnD.Tk()
+    except ImportError:
+        root = tk.Tk()
     app = RelatorioFotograficoApp(root)
     root.mainloop()
