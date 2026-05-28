@@ -16,14 +16,8 @@ ANOMALY_FILE = Path("anomalias.json")
 IMAGE_DIR = Path("imagens")
 AUTOSAVE_MS = 5 * 60 * 1000
 DEFAULT_ANOMALIAS = [
-    "Fissuras",
-    "Pisos soltos",
-    "Revestimentos soltos",
-    "Impermeabilização comprometida",
-    "Rachaduras",
-    "Trincas",
-    "Reboque ruim",
-    "Infiltração pela cobertura"
+    "ERRO. Consultar Léo para arquivo com todas as anomalias",
+    "Acrescentar aqui as anomalias que faltam",
 ]
 
 
@@ -111,10 +105,39 @@ class RelatorioFotograficoApp:
             messagebox.showerror("Erro", f"Falha ao salvar anomalias: {exc}")
 
     def refresh_anomaly_combo(self):
-        self.anomaly_combo["values"] = self.anomalias
-        current = self.anomaly_var.get().strip()
-        if current and current not in self.anomalias:
-            self.anomaly_var.set("")
+        query = self.anomaly_var.get().strip()
+        if query:
+            self.filter_anomaly_combo()
+        else:
+            self.anomaly_combo["values"] = self.anomalias
+
+    def filter_anomaly_combo(self):
+        query = self.anomaly_var.get().strip().casefold()
+        if not query:
+            self.anomaly_combo["values"] = self.anomalias
+            return
+        filtered = [name for name in self.anomalias if query in name.casefold()]
+        self.anomaly_combo["values"] = filtered
+
+    def resolve_anomaly_name(self, text):
+        text = text.strip()
+        if not text:
+            return None
+        text_fold = text.casefold()
+        for name in self.anomalias:
+            if name.casefold() == text_fold:
+                return name
+        starts_with = [name for name in self.anomalias if name.casefold().startswith(text_fold)]
+        if len(starts_with) == 1:
+            return starts_with[0]
+        contains = [name for name in self.anomalias if text_fold in name.casefold()]
+        if len(contains) == 1:
+            return contains[0]
+        if starts_with:
+            return starts_with[0]
+        if contains:
+            return contains[0]
+        return None
 
     def set_last_action(self, message):
         self.last_action_var.set(message)
@@ -243,10 +266,11 @@ class RelatorioFotograficoApp:
             anomaly_frame,
             textvariable=self.anomaly_var,
             values=self.anomalias,
-            state="readonly",
             width=24,
         )
         self.anomaly_combo.pack(fill="x", pady=(0, 4))
+        self.anomaly_combo.bind("<KeyRelease>", self.on_anomaly_combo_keyrelease)
+        self.anomaly_combo.bind("<Return>", self.on_anomaly_combo_return)
         self.anomaly_combo.bind("<<ComboboxSelected>>", lambda event: self.assign_selected_anomaly())
         self.refresh_anomaly_combo()
 
@@ -894,6 +918,43 @@ class RelatorioFotograficoApp:
                     return photo
         return None
 
+    def on_anomaly_combo_keyrelease(self, event):
+        if event.keysym in (
+            "Up",
+            "Down",
+            "Left",
+            "Right",
+            "Return",
+            "Tab",
+            "Escape",
+            "Shift_L",
+            "Shift_R",
+            "Control_L",
+            "Control_R",
+        ):
+            return
+        self.filter_anomaly_combo()
+
+    def on_anomaly_combo_return(self, event):
+        self.confirm_anomaly_from_combo()
+        return "break"
+
+    def confirm_anomaly_from_combo(self):
+        typed = self.anomaly_var.get().strip()
+        if not typed:
+            return
+        resolved = self.resolve_anomaly_name(typed)
+        if not resolved:
+            messagebox.showwarning(
+                "Atenção",
+                f"Nenhuma anomalia encontrada para '{typed}'.\n"
+                "Digite mais letras ou escolha um item da lista.",
+                parent=self.root,
+            )
+            return
+        self.anomaly_var.set(resolved)
+        self.save_anomaly()
+
     def save_anomaly(self):
         selected = self.tree.selection()
         if not selected:
@@ -906,14 +967,25 @@ class RelatorioFotograficoApp:
         photo = self.find_photo_by_id(item_id)
         if not photo:
             return
-        anomaly_name = self.anomaly_var.get().strip()
-        if not anomaly_name:
+        typed = self.anomaly_var.get().strip()
+        if not typed:
             messagebox.showwarning("Atenção", "Selecione uma anomalia antes de salvar.")
             return
+        anomaly_name = self.resolve_anomaly_name(typed)
+        if not anomaly_name:
+            messagebox.showwarning(
+                "Atenção",
+                f"Nenhuma anomalia encontrada para '{typed}'.\n"
+                "Digite mais letras ou escolha um item da lista.",
+                parent=self.root,
+            )
+            return
+        self.anomaly_var.set(anomaly_name)
         photo["anomaly"] = anomaly_name
         self.save_data()
         self.refresh_tree()
         self.tree.selection_set(item_id)
+        self.anomaly_combo["values"] = self.anomalias
         self.set_last_action(f"Foto {photo['order']} - {anomaly_name}")
 
     def assign_selected_anomaly(self):
