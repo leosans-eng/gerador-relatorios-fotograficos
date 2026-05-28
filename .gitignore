@@ -1,0 +1,11 @@
+create_venv.bat
+create_exe.bat
+.venv/
+.cursor/
+build/
+dist/
+setup/output/
+setup/icone.ico
+__pycache__/
+imagens/
+condominios.json
