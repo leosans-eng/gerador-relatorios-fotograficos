@@ -7,6 +7,7 @@ import time
 from ctypes import wintypes
 from pathlib import Path
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from PIL import Image, ImageGrab, ImageTk
 
@@ -46,6 +47,7 @@ class RelatorioFotograficoApp:
         self.preview_image = None
         self.anomalias = []
         self.collapsed_section_names = set()
+        self._handling_tree_select = False
         self.last_action_var = tk.StringVar(value="Nenhuma ação registrada.")
 
         self.load_data()
@@ -179,7 +181,12 @@ class RelatorioFotograficoApp:
         current_frame = ttk.Frame(section_labelframe)
         current_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         ttk.Label(current_frame, text="Etapa atual:").pack(side="left")
-        self.current_section_label = ttk.Label(current_frame, text="Nenhuma etapa")
+        self.current_section_font = tkfont.Font(weight="bold")
+        self.current_section_label = ttk.Label(
+            current_frame,
+            text="Nenhuma etapa",
+            font=self.current_section_font,
+        )
         self.current_section_label.pack(side="left", padx=(5, 0))
 
         ttk.Button(section_labelframe, text="Reordenar fotos", command=self.refresh_tree, style="Compact.TButton").grid(
@@ -325,6 +332,7 @@ class RelatorioFotograficoApp:
         style = ttk.Style(self.root)
         style.configure("Treeview", rowheight=24)
         style.configure("Treeview.Heading", font=(None, 10, "bold"))
+        self.tree.tag_configure("active_section", background="#e3f2fd")
 
     def setup_styles(self):
         style = ttk.Style(self.root)
@@ -552,6 +560,7 @@ class RelatorioFotograficoApp:
         self.current_section_index = len(self.current_cond["sections"]) - 1
         self.save_data()
         self.refresh_tree()
+        self.focus_current_section_in_tree()
         self.set_last_action(f"Bloco '{name}' criado.")
 
     def add_anomaly(self):
@@ -650,19 +659,75 @@ class RelatorioFotograficoApp:
         if section_name:
             self.collapsed_section_names.add(section_name)
 
+    def section_id_to_index(self, section_id):
+        if not str(section_id).startswith("section-"):
+            return None
+        try:
+            return int(str(section_id).split("-", 1)[1])
+        except (IndexError, ValueError):
+            return None
+
+    def apply_active_section_highlight(self):
+        if not self.current_cond:
+            return
+        for index in range(len(self.current_cond.get("sections", []))):
+            section_id = f"section-{index}"
+            if not self.tree.exists(section_id):
+                continue
+            tags = ("section", "active_section") if index == self.current_section_index else ("section",)
+            self.tree.item(section_id, tags=tags)
+
+    def set_active_section(self, index, *, focus_tree=False, clear_preview=False):
+        if not self.current_cond:
+            return
+        sections = self.current_cond.get("sections", [])
+        if not sections or index < 0 or index >= len(sections):
+            return
+        self.current_section_index = index
+        self.update_current_section_label()
+        self.apply_active_section_highlight()
+        if focus_tree:
+            self.focus_current_section_in_tree()
+        if clear_preview:
+            self.preview_label.config(text="Selecione uma foto para ver o preview.")
+            self.preview_image = None
+
+    def focus_current_section_in_tree(self):
+        if not self.current_cond:
+            return
+        sections = self.current_cond.get("sections", [])
+        if not sections:
+            return
+        section_id = f"section-{self.current_section_index}"
+        if not self.tree.exists(section_id):
+            return
+        self._handling_tree_select = True
+        try:
+            self.tree.selection_set(section_id)
+            self.tree.focus(section_id)
+            self.tree.see(section_id)
+        finally:
+            self._handling_tree_select = False
+
     def goto_previous_section(self):
         if not self.current_cond:
             return
         if self.current_section_index > 0:
-            self.current_section_index -= 1
-            self.refresh_tree()
+            self.set_active_section(
+                self.current_section_index - 1,
+                focus_tree=True,
+                clear_preview=True,
+            )
 
     def goto_next_section(self):
         if not self.current_cond:
             return
         if self.current_section_index < len(self.current_cond["sections"]) - 1:
-            self.current_section_index += 1
-            self.refresh_tree()
+            self.set_active_section(
+                self.current_section_index + 1,
+                focus_tree=True,
+                clear_preview=True,
+            )
 
     def update_current_section_label(self):
         if not self.current_cond:
@@ -684,7 +749,8 @@ class RelatorioFotograficoApp:
         for index, section in enumerate(sections):
             section_text = section["name"]
             section_id = f"section-{index}"
-            self.tree.insert("", "end", section_id, text=section_text, values=("", "", ""), tags=("section",))
+            section_tags = ("section", "active_section") if index == self.current_section_index else ("section",)
+            self.tree.insert("", "end", section_id, text=section_text, values=("", "", ""), tags=section_tags)
             self.tree.item(
                 section_id,
                 open=section_text not in self.collapsed_section_names,
@@ -776,11 +842,22 @@ class RelatorioFotograficoApp:
         return sections[self.current_section_index]
 
     def on_tree_select(self):
+        if self._handling_tree_select:
+            return
         selected = self.tree.selection()
         if not selected:
             return
         item_id = selected[0]
+        if str(item_id).startswith("section-"):
+            index = self.section_id_to_index(item_id)
+            if index is not None:
+                self.set_active_section(index, clear_preview=True)
+            return
         if self.find_photo_by_id(item_id):
+            parent_id = self.tree.parent(item_id)
+            index = self.section_id_to_index(parent_id)
+            if index is not None and index != self.current_section_index:
+                self.set_active_section(index)
             self.load_photo_preview(item_id)
         else:
             self.preview_label.config(text="Selecione uma foto para ver o preview.")
