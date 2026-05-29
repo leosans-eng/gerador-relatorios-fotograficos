@@ -13,7 +13,7 @@ from PIL import Image, ImageGrab, ImageTk
 
 from app_paths import app_dir, icon_path
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 APP_ROOT = app_dir()
 DATA_FILE = APP_ROOT / "condominios.json"
 ANOMALY_FILE = APP_ROOT / "anomalias.json"
@@ -327,7 +327,7 @@ class RelatorioFotograficoApp:
         tree_frame.pack(fill="both", expand=True)
 
         columns = ("num", "anomaly", "file")
-        self.tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings", selectmode="browse")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings", selectmode="extended")
         self.tree.heading("#0", text="Etapa")
         self.tree.heading("num", text="Foto #")
         self.tree.heading("anomaly", text="Anomalia")
@@ -340,6 +340,8 @@ class RelatorioFotograficoApp:
         self.tree.bind("<<TreeviewSelect>>", lambda event: self.on_tree_select())
         self.tree.bind("<<TreeviewOpen>>", self.on_tree_section_open)
         self.tree.bind("<<TreeviewClose>>", self.on_tree_section_close)
+        self.tree.bind("<Delete>", self.on_tree_delete_key)
+        self.tree.bind("<KP_Delete>", self.on_tree_delete_key)
 
         scrollbar = ttk.Scrollbar(tree_frame, command=self.tree.yview)
         scrollbar.pack(side="right", fill="y")
@@ -1045,6 +1047,20 @@ class RelatorioFotograficoApp:
             self.current_section_index = len(sections) - 1
         return sections[self.current_section_index]
 
+    def get_selected_photo_ids(self):
+        return [item_id for item_id in self.tree.selection() if self.find_photo_by_id(item_id)]
+
+    def get_focused_photo_id(self):
+        focused = self.tree.focus()
+        if focused and self.find_photo_by_id(focused):
+            return focused
+        photo_ids = self.get_selected_photo_ids()
+        return photo_ids[0] if photo_ids else None
+
+    def on_tree_delete_key(self, event):
+        self.delete_selected_photo()
+        return "break"
+
     def on_tree_select(self):
         if self._handling_tree_select:
             return
@@ -1052,17 +1068,18 @@ class RelatorioFotograficoApp:
         if not selected:
             return
         item_id = selected[0]
-        if str(item_id).startswith("section-"):
+        if str(item_id).startswith("section-") and len(selected) == 1:
             index = self.section_id_to_index(item_id)
             if index is not None:
                 self.set_active_section(index, clear_preview=True)
             return
-        if self.find_photo_by_id(item_id):
-            parent_id = self.tree.parent(item_id)
+        preview_id = self.get_focused_photo_id()
+        if preview_id:
+            parent_id = self.tree.parent(preview_id)
             index = self.section_id_to_index(parent_id)
             if index is not None and index != self.current_section_index:
                 self.set_active_section(index)
-            self.load_photo_preview(item_id)
+            self.load_photo_preview(preview_id)
         else:
             self.preview_label.config(text="Selecione uma foto para ver o preview.")
             self.preview_image = None
@@ -1136,16 +1153,13 @@ class RelatorioFotograficoApp:
         self.save_anomaly()
 
     def save_anomaly(self):
-        selected = self.tree.selection()
-        if not selected:
+        item_id = self.get_focused_photo_id()
+        if not item_id:
             messagebox.showwarning("Atenção", "Selecione a foto para associar uma anomalia.")
-            return
-        item_id = selected[0]
-        if not self.find_photo_by_id(item_id):
-            messagebox.showwarning("Atenção", "Selecione uma foto válida.")
             return
         photo = self.find_photo_by_id(item_id)
         if not photo:
+            messagebox.showwarning("Atenção", "Selecione uma foto válida.")
             return
         typed = self.anomaly_var.get().strip()
         if not typed:
@@ -1200,35 +1214,51 @@ class RelatorioFotograficoApp:
         )
 
     def delete_selected_photo(self):
-        selected = self.tree.selection()
-        if not selected:
+        photo_ids = self.get_selected_photo_ids()
+        if not photo_ids:
+            if self.tree.selection():
+                messagebox.showwarning("Nenhuma foto selecionada",
+                "Selecione uma foto para excluir. Para excluir um bloco, utilize 'Excluir etapa atual', à esquerda.",
+                parent=self.root,
+                icon="warning")
             return
-        item_id = selected[0]
-        if not self.find_photo_by_id(item_id):
-            messagebox.showwarning("Selecione uma foto para excluir.")
-            return
-        if not messagebox.askyesno("Excluir foto", "Deseja excluir esta foto?", parent=self.root):
+        count = len(photo_ids)
+        if count == 1:
+            confirm = "Deseja excluir esta foto?"
+        else:
+            confirm = f"Deseja excluir as {count} fotos selecionadas?"
+        if not messagebox.askyesno("Excluir foto", confirm, parent=self.root):
             return
         if not self.current_cond:
             return
-        photo = self.find_photo_by_id(item_id)
-        photo_order = photo["order"] if photo else "?"
+        id_set = set(photo_ids)
+        removed_orders = []
         for section in self.current_cond.get("sections", []):
-            section["photos"] = [photo for photo in section["photos"] if photo["id"] != item_id]
+            for photo in section.get("photos", []):
+                if photo["id"] in id_set:
+                    removed_orders.append(photo["order"])
+            section["photos"] = [photo for photo in section["photos"] if photo["id"] not in id_set]
         self.renumber_photos()
         self.save_data()
         self.refresh_tree()
         self.preview_label.config(image="", text="Selecione uma foto para ver o preview.")
         self.preview_image = None
-        self.set_last_action(f"Foto {photo_order} excluída.")
+        if count == 1:
+            self.set_last_action(f"Foto {removed_orders[0]} excluída.")
+        else:
+            self.set_last_action(f"{count} fotos excluídas.")
 
     def move_photo(self, direction):
-        selected = self.tree.selection()
-        if not selected:
-            return
-        item_id = selected[0]
-        if not self.find_photo_by_id(item_id):
+        item_id = self.get_focused_photo_id()
+        if not item_id:
             messagebox.showwarning("Selecione uma foto para mover.")
+            return
+        if len(self.get_selected_photo_ids()) > 1:
+            messagebox.showwarning(
+                "Atenção",
+                "Selecione apenas uma foto para mover.",
+                parent=self.root,
+            )
             return
         if not self.current_cond:
             return
