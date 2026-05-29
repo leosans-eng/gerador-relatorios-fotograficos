@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import ssl
 import tempfile
 import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable, Literal
+from urllib.parse import unquote, urlparse
 from tkinter import messagebox, ttk
 
 import tkinter as tk
@@ -19,7 +21,8 @@ import tkinter as tk
 VERSION_JSON_URL = (
     "https://raw.githubusercontent.com/leosans-eng/gerador-relatorios-fotograficos/main/version.json"
 )
-REQUEST_TIMEOUT_SEC = 15
+INSTALLER_FALLBACK_NAME = "GeradorRelatoriosFotograficos_Setup.exe"
+REQUEST_TIMEOUT_SEC = 60
 CHUNK_SIZE = 256 * 1024
 
 
@@ -49,7 +52,7 @@ def fetch_remote_version_info(
         url,
         headers={"User-Agent": f"GeradorRelatoriosFotograficos/{app_version}"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with open_url(request, timeout=timeout) as response:
         payload = json.loads(response.read().decode("utf-8"))
     if not isinstance(payload, dict):
         return None
@@ -63,11 +66,41 @@ def fetch_remote_version_info(
     }
 
 
-def default_download_path() -> Path:
+def format_download_error(exc: BaseException) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}: {exc.reason or 'erro no servidor'}"
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if reason is None:
+            return "Falha de conexão com o servidor."
+        if isinstance(reason, BaseException):
+            text = str(reason).strip()
+            return text if text and text.lower() != "none" else repr(reason)
+        text = str(reason).strip()
+        return text if text and text.lower() != "none" else "Falha de conexão com o servidor."
+    text = str(exc).strip()
+    if not text or text.lower() == "none":
+        return repr(exc)
+    return text
+
+
+def download_folder() -> Path:
     downloads = Path.home() / "Downloads"
     if downloads.is_dir():
         return downloads
     return Path(tempfile.gettempdir())
+
+
+def resolve_download_destination(url: str) -> Path:
+    filename = unquote(Path(urlparse(url).path).name)
+    if not filename.lower().endswith(".exe"):
+        filename = INSTALLER_FALLBACK_NAME
+    return download_folder() / filename
+
+
+def open_url(request: urllib.request.Request, timeout: int = REQUEST_TIMEOUT_SEC):
+    context = ssl.create_default_context()
+    return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 def download_file(
@@ -81,8 +114,14 @@ def download_file(
         url,
         headers={"User-Agent": f"GeradorRelatoriosFotograficos/{app_version}"},
     )
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SEC) as response:
+    with open_url(request) as response:
         total = int(response.headers.get("Content-Length", 0))
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "text/html" in content_type:
+            raise ValueError(
+                "O link de download retornou uma página web em vez do instalador. "
+                "Verifique a URL em version.json no GitHub."
+            )
         downloaded = 0
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("wb") as handle:
@@ -171,7 +210,7 @@ class UpdateDialog(tk.Toplevel):
         thread.start()
 
     def _download_worker(self) -> None:
-        destination = default_download_path()
+        destination = resolve_download_destination(self.info["download"])
         try:
 
             def on_progress(done: int, total: int) -> None:
@@ -180,13 +219,13 @@ class UpdateDialog(tk.Toplevel):
                 if total > 0:
                     percent = min(100, int(done * 100 / total))
                     text = f"Baixando instalador... {percent}%"
-                    mode = "determinate"
+                    mode: Literal["determinate", "indeterminate"] = "determinate"
                     value = percent
                 else:
                     text = "Baixando instalador..."
                     mode = "indeterminate"
                     value = 0
-                self.root.after(0, lambda: self._update_progress(text, mode, value))
+                self.root.after(0, lambda t=text, m=mode, v=value: self._update_progress(t, m, v))
 
             download_file(
                 self.info["download"],
@@ -196,11 +235,14 @@ class UpdateDialog(tk.Toplevel):
             )
             if self._cancelled:
                 return
+            if not destination.is_file() or destination.stat().st_size == 0:
+                raise OSError("O arquivo baixado está vazio ou não foi criado.")
             self.download_path = destination
             self.root.after(0, self._on_download_success)
         except Exception as exc:
             if not self._cancelled:
-                self.root.after(0, lambda: self._on_download_error(exc))
+                message = format_download_error(exc)
+                self.root.after(0, lambda msg=message: self._on_download_error(msg))
 
     def _update_progress(self, text: str, mode: Literal["determinate", "indeterminate"], value: int) -> None:
         if not self.winfo_exists():
@@ -228,14 +270,14 @@ class UpdateDialog(tk.Toplevel):
             parent=self,
         )
 
-    def _on_download_error(self, exc: Exception) -> None:
+    def _on_download_error(self, message: str) -> None:
         if not self.winfo_exists():
             return
         self.progress.stop()
-        self.status_var.set(f"Falha no download: {exc}")
+        self.status_var.set(f"Falha no download: {message}")
         messagebox.showerror(
             "Erro no download",
-            f"Não foi possível baixar a atualização.\n\n{exc}",
+            f"Não foi possível baixar a atualização.\n\n{message}",
             parent=self,
         )
 
