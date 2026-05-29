@@ -625,21 +625,84 @@ class RelatorioFotograficoApp:
         self.refresh_anomaly_combo()
         self.set_last_action(f"Anomalia '{current}' excluída da lista.")
 
+    def find_photos_without_anomaly(self):
+        missing = []
+        if not self.current_cond:
+            return missing
+        for section in self.current_cond.get("sections", []):
+            section_name = section.get("name", "Sem nome")
+            for photo in section.get("photos", []):
+                if not str(photo.get("anomaly", "")).strip():
+                    missing.append(
+                        (
+                            section_name,
+                            photo.get("order", "?"),
+                            os.path.basename(str(photo.get("path", ""))),
+                        )
+                    )
+        return missing
+
     def generate_word_report(self):
-        script_path = Path("gerar_relatorio_word.py")
-        condo_name = self.condo_var.get().strip() or "sem condomínio"
-        if not script_path.exists():
-            messagebox.showinfo(
-                "Gerar relatório Word",
-                "O script 'gerar_relatorio_word.py' ainda não foi criado.",
-            )
-            self.set_last_action(f"Relatório Word solicitado ({condo_name}) — script pendente.")
+        if not self.current_cond:
+            messagebox.showwarning("Aviso", "Selecione um condomínio antes de gerar o relatório.")
             return
+
+        condo_name = self.condo_var.get().strip()
+        missing = self.find_photos_without_anomaly()
+        if missing:
+            lines = [
+                f"• Etapa '{section}', foto {order} ({filename})"
+                for section, order, filename in missing[:15]
+            ]
+            extra = len(missing) - 15
+            if extra > 0:
+                lines.append(f"• ... e mais {extra} foto(s).")
+            messagebox.showerror(
+                "Anomalias obrigatórias",
+                "Todas as fotos precisam ter uma anomalia selecionada antes de gerar o Word.\n\n"
+                + "\n".join(lines),
+                parent=self.root,
+            )
+            self.set_last_action(
+                f"Relatório Word bloqueado: {len(missing)} foto(s) sem anomalia em '{condo_name}'."
+            )
+            return
+
+        total_photos = len(self.get_flat_photos())
+        if total_photos == 0:
+            messagebox.showwarning(
+                "Aviso",
+                "Não há fotos no condomínio selecionado. Adicione fotos antes de gerar o relatório.",
+                parent=self.root,
+            )
+            return
+
+        try:
+            from gerar_relatorio_word import gerar_relatorio
+
+            output_path = gerar_relatorio(
+                condo_name,
+                self.current_cond,
+                parent=self.root,
+            )
+        except RuntimeError as exc:
+            if "cancelado" in str(exc).casefold():
+                self.set_last_action(f"Geração do relatório Word cancelada para '{condo_name}'.")
+                return
+            messagebox.showerror("Erro ao gerar relatório", str(exc), parent=self.root)
+            self.set_last_action(f"Erro ao gerar relatório Word para '{condo_name}'.")
+            return
+        except Exception as exc:
+            messagebox.showerror("Erro ao gerar relatório", str(exc), parent=self.root)
+            self.set_last_action(f"Erro ao gerar relatório Word para '{condo_name}'.")
+            return
+
+        self.set_last_action(f"Relatório Word gerado: {output_path.name}")
         messagebox.showinfo(
-            "Gerar relatório Word",
-            "Base pronta: conecte aqui a chamada do script de geração do Word.",
+            "Relatório gerado",
+            f"O relatório foi salvo e aberto:\n{output_path}",
+            parent=self.root,
         )
-        self.set_last_action(f"Relatório Word solicitado para '{condo_name}'.")
 
     def delete_current_section(self):
         if not self.current_cond:
