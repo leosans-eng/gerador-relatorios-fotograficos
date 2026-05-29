@@ -13,7 +13,7 @@ from PIL import Image, ImageGrab, ImageTk
 
 from app_paths import app_dir, icon_path
 
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 APP_ROOT = app_dir()
 DATA_FILE = APP_ROOT / "condominios.json"
 ANOMALY_FILE = APP_ROOT / "anomalias.json"
