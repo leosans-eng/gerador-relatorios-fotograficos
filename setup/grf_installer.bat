@@ -14,7 +14,7 @@ echo Versao do app: %APPVER%
 
 echo.
 echo [1/2] Gerando executavel com PyInstaller...
-"%PYTHON%" -m pip install pyinstaller --quiet
+"%PYTHON%" -m pip install pyinstaller certifi --quiet
 "%PYTHON%" -m PyInstaller ^
     --noconfirm ^
     --windowed ^
@@ -26,6 +26,8 @@ echo [1/2] Gerando executavel com PyInstaller...
     --hidden-import gerar_relatorio_word ^
     --hidden-import atualizacao ^
     --hidden-import app_paths ^
+    --hidden-import certifi ^
+    --collect-data certifi ^
     --hidden-import tkinterdnd2 ^
     main.py
 if errorlevel 1 exit /b 1

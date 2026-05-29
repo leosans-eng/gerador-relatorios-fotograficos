@@ -15,6 +15,7 @@ from typing import Callable, Literal
 from urllib.parse import unquote, urlparse
 from tkinter import messagebox, ttk
 
+import certifi
 import tkinter as tk
 
 # URL do version.json na branch principal do repositório (ajuste usuário/repositório).
@@ -71,6 +72,11 @@ def format_download_error(exc: BaseException) -> str:
         return f"HTTP {exc.code}: {exc.reason or 'erro no servidor'}"
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return (
+                "Falha ao verificar certificado SSL do servidor. "
+                "Reinstale a versão mais recente do programa ou verifique a conexão com a internet."
+            )
         if reason is None:
             return "Falha de conexão com o servidor."
         if isinstance(reason, BaseException):
@@ -78,6 +84,11 @@ def format_download_error(exc: BaseException) -> str:
             return text if text and text.lower() != "none" else repr(reason)
         text = str(reason).strip()
         return text if text and text.lower() != "none" else "Falha de conexão com o servidor."
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return (
+            "Falha ao verificar certificado SSL do servidor. "
+            "Reinstale a versão mais recente do programa ou verifique a conexão com a internet."
+        )
     text = str(exc).strip()
     if not text or text.lower() == "none":
         return repr(exc)
@@ -98,8 +109,16 @@ def resolve_download_destination(url: str) -> Path:
     return download_folder() / filename
 
 
+def create_ssl_context() -> ssl.SSLContext:
+    """Usa certificados do certifi (incluso no .exe) para evitar falha de SSL em outros PCs."""
+    ca_bundle = certifi.where()
+    if Path(ca_bundle).is_file():
+        return ssl.create_default_context(cafile=ca_bundle)
+    return ssl.create_default_context()
+
+
 def open_url(request: urllib.request.Request, timeout: int = REQUEST_TIMEOUT_SEC):
-    context = ssl.create_default_context()
+    context = create_ssl_context()
     return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
@@ -266,7 +285,7 @@ class UpdateDialog(tk.Toplevel):
         messagebox.showinfo(
             "Atualização baixada",
             "O instalador foi baixado.\n\n"
-            "Feche o programa e clique em \"Instalar agora\" para atualizar.",
+            "Clique em \"Ok\" e depois em \"Instalar agora\" para atualizar.",
             parent=self,
         )
 

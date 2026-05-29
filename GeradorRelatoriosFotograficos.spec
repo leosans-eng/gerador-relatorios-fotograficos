@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+
+datas = [('modelos', 'modelos'), ('setup', 'setup'), ('anomalias.json', '.')]
+datas += collect_data_files('certifi')
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('modelos', 'modelos'), ('setup', 'setup'), ('anomalias.json', '.')],
-    hiddenimports=['gerar_relatorio_word', 'atualizacao', 'app_paths', 'tkinterdnd2'],
+    datas=datas,
+    hiddenimports=['gerar_relatorio_word', 'atualizacao', 'app_paths', 'certifi', 'tkinterdnd2'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

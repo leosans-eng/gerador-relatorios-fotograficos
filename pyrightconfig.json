@@ -3,6 +3,7 @@
   "venv": ".venv",
   "pythonVersion": "3.12",
   "typeCheckingMode": "basic",
+  "stubPath": "typings",
   "executionEnvironments": [
     {
       "root": ".",
