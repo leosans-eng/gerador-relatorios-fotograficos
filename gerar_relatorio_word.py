@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -9,32 +10,31 @@ from copy import deepcopy
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+from app_paths import app_dir, bundle_dir
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import Emu
 from docx.table import Table
 
 _W_PPR_LOCAL_TAG = "pPr"
+_W_T_TAG = qn("w:t")
+_W_TR_TAG = qn("w:tr")
+_HEADING1_TEXT = "REGISTROS FOTOGRÁFICOS "
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = app_dir()
+TEMPLATE_PATH = bundle_dir() / "modelos" / "relatorio_modelo.docx"
 PHOTOS_PER_TABLE = 12
-TABLE_ROWS = 6
 TABLE_COLS = 2
 IMAGE_WIDTH = Emu(2667000)
 IMAGE_HEIGHT = Emu(1917700)
-
-TEMPLATE_CANDIDATES = [
-    APP_DIR / "modelos" / "relatorio_modelo.docx",
-    Path.home() / "Downloads" / "2. RELATÓRIO FOTOGRÁFICO-ÁREA COMUM-COND. XXXXXXXXXXXX-CIDADE-UF.docx",
-]
+_KEEP_BODY_PREFIX = 3  # ÍNDICE, sumário (sdt) e quebra de página após o índice
 
 
 def resolve_template_path() -> Path:
-    for candidate in TEMPLATE_CANDIDATES:
-        if candidate.exists():
-            return candidate
+    if TEMPLATE_PATH.exists():
+        return TEMPLATE_PATH
     raise FileNotFoundError(
-        "Modelo Word não encontrado. Coloque o arquivo em 'modelos/relatorio_modelo.docx' "
-        "ou em Downloads com o nome padrão do relatório."
+        "Modelo Word não encontrado. Coloque o arquivo em 'modelos/relatorio_modelo.docx'."
     )
 
 
@@ -90,21 +90,13 @@ def _clear_paragraph(paragraph):
 
 def _set_caption(paragraph, photo_number: int, anomaly: str):
     _clear_paragraph(paragraph)
-    text = f"Foto {photo_number} – {anomaly}"
-    paragraph.add_run(text)
+    paragraph.add_run(f"Foto {photo_number} – {anomaly}")
 
 
 def _set_image(paragraph, image_path: Path):
     _clear_paragraph(paragraph)
     run = paragraph.add_run()
     run.add_picture(str(image_path), width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
-
-
-def _clear_photo_cell(cell):
-    if len(cell.paragraphs) >= 1:
-        _clear_paragraph(cell.paragraphs[0])
-    if len(cell.paragraphs) >= 2:
-        _clear_paragraph(cell.paragraphs[1])
 
 
 def _fill_photo_cell(cell, image_path: Path, photo_number: int, anomaly: str):
@@ -114,75 +106,181 @@ def _fill_photo_cell(cell, image_path: Path, photo_number: int, anomaly: str):
     _set_caption(cell.paragraphs[1], photo_number, anomaly)
 
 
-def _populate_table(table, photos: list[dict], start_photo_number: int):
-    for index in range(PHOTOS_PER_TABLE):
+def _populate_table(table: Table, photos: list[dict]):
+    needed_cells = len(photos)
+    for index in range(needed_cells):
         row = index // TABLE_COLS
         col = index % TABLE_COLS
         cell = table.cell(row, col)
-        if index < len(photos):
-            photo = photos[index]
-            image_path = resolve_image_path(str(photo.get("path", "")))
-            if image_path is None:
-                raise FileNotFoundError(
-                    f"Imagem não encontrada para a foto {photo.get('order', '?')}: {photo.get('path', '')}"
-                )
-            _fill_photo_cell(
-                cell,
-                image_path,
-                int(photo.get("order", start_photo_number + index)),
-                str(photo.get("anomaly", "")).strip(),
+        photo = photos[index]
+        image_path = resolve_image_path(str(photo.get("path", "")))
+        if image_path is None:
+            raise FileNotFoundError(
+                f"Imagem não encontrada para a foto {photo.get('order', '?')}: {photo.get('path', '')}"
             )
-        else:
-            _clear_photo_cell(cell)
+        _fill_photo_cell(
+            cell,
+            image_path,
+            int(photo.get("order", index + 1)),
+            str(photo.get("anomaly", "")).strip(),
+        )
+
+
+def _trim_table_rows(table_element, photo_count: int):
+    needed_rows = max(1, math.ceil(photo_count / TABLE_COLS)) if photo_count else 0
+    rows = table_element.findall(_W_TR_TAG)
+    while len(rows) > needed_rows:
+        table_element.remove(rows[-1])
+        rows = table_element.findall(_W_TR_TAG)
+
+
+def _remove_bookmarks(element):
+    for tag in ("bookmarkStart", "bookmarkEnd"):
+        for node in list(element.iter()):
+            if node.tag.split("}")[-1] == tag:
+                parent = node.getparent()
+                if parent is not None:
+                    parent.remove(node)
+
+
+def _set_element_text(element, text: str):
+    text_nodes = [node for node in element.iter() if node.tag == _W_T_TAG]
+    if not text_nodes:
+        run = element.makeelement(qn("w:r"), {})
+        text_node = run.makeelement(_W_T_TAG, {})
+        text_node.text = text
+        run.append(text_node)
+        element.append(run)
+        return
+    text_nodes[0].text = text
+    for node in text_nodes[1:]:
+        node.text = ""
+
+
+def _get_num_id(template_paragraph) -> str | None:
+    num_pr = template_paragraph._element.find(f".//{qn('w:numPr')}")
+    if num_pr is None:
+        return None
+    num_id = num_pr.find(qn("w:numId"))
+    if num_id is None:
+        return None
+    return num_id.get(qn("w:val"))
+
+
+def _apply_heading_numbering(element, num_id: str, ilvl: str):
+    p_pr = element.find(qn("w:pPr"))
+    if p_pr is None:
+        p_pr = element.makeelement(qn("w:pPr"), {})
+        element.insert(0, p_pr)
+    existing = p_pr.find(qn("w:numPr"))
+    if existing is not None:
+        p_pr.remove(existing)
+    num_pr = p_pr.makeelement(qn("w:numPr"), {})
+    ilvl_el = num_pr.makeelement(qn("w:ilvl"), {qn("w:val"): ilvl})
+    num_id_el = num_pr.makeelement(qn("w:numId"), {qn("w:val"): num_id})
+    num_pr.append(ilvl_el)
+    num_pr.append(num_id_el)
+    p_pr.append(num_pr)
+
+
+def _clone_paragraph_element(
+    template_paragraph,
+    text: str | None = None,
+    *,
+    ilvl: str | None = None,
+    num_id: str | None = None,
+):
+    element = deepcopy(template_paragraph._element)
+    _remove_bookmarks(element)
+    if text is not None:
+        _set_element_text(element, text)
+    if ilvl is not None and num_id:
+        _apply_heading_numbering(element, num_id, ilvl)
+    return element
+
+
+def _clone_page_break_element(template_paragraph):
+    element = deepcopy(template_paragraph._element)
+    _remove_bookmarks(element)
+    return element
+
+
+def _insert_before_sectpr(doc, element):
+    body = doc.element.body
+    sect_pr = body[-1]
+    body.insert(list(body).index(sect_pr), element)
 
 
 def _remove_generated_content(doc):
     body = doc.element.body
     children = list(body)
-    if len(children) < 2:
+    if len(children) <= _KEEP_BODY_PREFIX + 1:
         return
-    for child in children[2:-1]:
+    for child in children[_KEEP_BODY_PREFIX:-1]:
         body.remove(child)
 
 
-def _insert_table_before_sectpr(doc, table_element):
-    body = doc.element.body
-    sect_pr = body[-1]
-    body.insert(list(body).index(sect_pr), table_element)
+def _extract_template_parts(doc):
+    paragraphs = doc.paragraphs
+    if len(paragraphs) < 7 or not doc.tables:
+        raise ValueError("O modelo Word não possui a estrutura esperada (índice, títulos e tabela).")
+    return {
+        "heading1": paragraphs[2],
+        "heading2": paragraphs[3],
+        "page_break": paragraphs[5],
+        "table": doc.tables[0]._tbl,
+    }
 
 
-def _add_heading(doc, text: str, style_name: str):
-    paragraph = doc.add_paragraph(text, style=style_name)
-    paragraph_element = paragraph._element
-    body = doc.element.body
-    sect_pr = body[-1]
-    body.insert(list(body).index(sect_pr), paragraph_element)
-    return paragraph
+def _format_section_heading(section_name: str) -> str:
+    return section_name.strip().upper() or "BLOCO"
 
 
 def _build_report_body(doc, condominio_data: dict):
-    template_table = deepcopy(doc.tables[0]._tbl)
+    parts = _extract_template_parts(doc)
+    template_table = parts["table"]
     _remove_generated_content(doc)
-    _add_heading(doc, "REGISTROS FOTOGRÁFICOS ", "Heading 1")
 
-    sections = condominio_data.get("sections", [])
-    for section in sections:
+    heading1 = parts["heading1"]
+    heading_num_id = _get_num_id(heading1)
+    _insert_before_sectpr(
+        doc,
+        _clone_paragraph_element(heading1, _HEADING1_TEXT),
+    )
+
+    sections = [
+        section
+        for section in condominio_data.get("sections", [])
+        if section.get("photos")
+    ]
+    if not sections:
+        return
+
+    for section_index, section in enumerate(sections):
         photos = sorted(section.get("photos", []), key=lambda item: item.get("order", 0))
-        if not photos:
-            continue
-        _add_heading(doc, section.get("name", "Bloco"), "Heading 2")
+        _insert_before_sectpr(
+            doc,
+            _clone_paragraph_element(
+                parts["heading2"],
+                _format_section_heading(section.get("name", "Bloco")),
+                ilvl="1",
+                num_id=heading_num_id,
+            ),
+        )
+
         for chunk_start in range(0, len(photos), PHOTOS_PER_TABLE):
             chunk = photos[chunk_start : chunk_start + PHOTOS_PER_TABLE]
             new_table = deepcopy(template_table)
-            _insert_table_before_sectpr(doc, new_table)
+            _trim_table_rows(new_table, len(chunk))
+            _insert_before_sectpr(doc, new_table)
             table = Table(new_table, doc)
-            start_number = int(chunk[0].get("order", chunk_start + 1)) if chunk else chunk_start + 1
-            _populate_table(table, chunk, start_number)
-            spacer = doc.add_paragraph("")
-            spacer_element = spacer._element
-            body = doc.element.body
-            sect_pr = body[-1]
-            body.insert(list(body).index(sect_pr), spacer_element)
+            _populate_table(table, chunk)
+
+        if section_index < len(sections) - 1:
+            _insert_before_sectpr(
+                doc,
+                _clone_page_break_element(parts["page_break"]),
+            )
 
 
 def gerar_relatorio(

@@ -5,8 +5,6 @@ create_exe.bat
 build/
 dist/
 setup/output/
-setup/icone.ico
 __pycache__/
 imagens/
 condominios.json
-modelos/

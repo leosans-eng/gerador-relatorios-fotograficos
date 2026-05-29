@@ -11,13 +11,89 @@ import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from PIL import Image, ImageGrab, ImageTk
 
-DATA_FILE = Path("condominios.json")
-ANOMALY_FILE = Path("anomalias.json")
-IMAGE_DIR = Path("imagens")
+from app_paths import app_dir, icon_path
+
+APP_VERSION = "1.0.0"
+APP_ROOT = app_dir()
+DATA_FILE = APP_ROOT / "condominios.json"
+ANOMALY_FILE = APP_ROOT / "anomalias.json"
+IMAGE_DIR = APP_ROOT / "imagens"
 AUTOSAVE_MS = 5 * 60 * 1000
 DEFAULT_ANOMALIAS = [
-    "ERRO. Consultar Léo para arquivo com todas as anomalias",
-    "Acrescentar aqui as anomalias que faltam",
+    "Armadura exposta",
+    "Caixas de inspeção em desacordo à NBR 9050",
+    "Cobertura de acesso ao bloco",
+    "Concreção ferruginosa",
+    "Condutor em desacordo à NBR 10844",
+    "Contenção de talude",
+    "Corrimão em desacordo à NBR 9050",
+    "Corrosão de elementos metálicos",
+    "Degraus em desacordo à NBR 9050",
+    "Destacamento do revestimento",
+    "Destelhamento",
+    "Deterioração da pavimentação",
+    "Deterioração do abrigo",
+    "Deterioração do calçamento",
+    "Drenagem superficial ineficiente",
+    "Empolamento do revestimento",
+    "Erosão do solo",
+    "Faixa de umidade persistente",
+    "Falha de aderência da pintura",
+    "Falha na instalação do rufo",
+    "Falha na junta de dilatação",
+    "Falha na vedação/soldagem das conexões",
+    "Falha na vinculação de elementos",
+    "Falha no cobrimento da armadura",
+    "Falta de calha de captação pluvial",
+    "Falta de dispositivo DR",
+    "Falta de piso tátil",
+    "Falta de rufo pingadeira",
+    "Falta de sinalização visual",
+    "Falta ou falha da faixa de travessia",
+    "Falta ou falha da rampa de acesso",
+    "Falta ou falha da vaga acessível",
+    "Falta ou falha de corrimão",
+    "Falta ou falha do guarda-corpo",
+    "Falta ou falha do peitoril",
+    "Falta ou falha na impermeabilização da área molhada",
+    "Fissura higroscópica",
+    "Fissura mapeada",
+    "Infiltração pela fachada",
+    "Infiltração pelas esquadrias",
+    "Infiltração pelo cobogó",
+    "Má instalação das janelas",
+    "Muro de arrimo com falta de drenagem",
+    "Muro de arrimo com trincas e deformações",
+    "Muro de divisa com trincas, deformação, umidade e reboco deteriorado",
+    "Piso solto, trincado ou com som cavo",
+    "Prolongamento insuficiente do peitoril",
+    "Reboco em desacordo à NBR 13529",
+    "Reboco em desacordo às NBRs 7200 e 13749",
+    "Reparo inadequado",
+    "Revestimento argamassado pulverulento",
+    "Revestimento argamassado solto",
+    "Rufo nas platibandas",
+    "Tampas em desacordo à NBR 8160",
+    "Transpasse inadequado do peitoril",
+    "Trinca contígua à esquadria",
+    "Trinca devido à deformação estrutural",
+    "Trinca entre a laje e a alvenaria",
+    "Trinca horizontal",
+    "Trinca na laje do hall",
+    "Trinca no abrigo",
+    "Trinca no calçamento",
+    "Trinca no calçamento perimetral",
+    "Trinca saindo da janela",
+    "Trinca saindo da porta",
+    "Trinca vertical na alvenaria",
+    "Umidade ascendente",
+    "Umidade na laje",
+    "Umidade na moldura",
+    "Umidade no abrigo",
+    "Umidade no alçapão",
+    "Umidade pela fachada",
+    "Utilização de elemento não estanque (cobogó)",
+    "Vesículas no reboco da fachada",
 ]
 
 
@@ -38,10 +114,16 @@ class _TkinterDnDDropTarget(Protocol):
 class RelatorioFotograficoApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Gerador de Relatórios Fotográficos")
+        self.root.title(f"Gerador de Relatórios Fotográficos  v{APP_VERSION}")
         self.root.geometry("1240x760")
         self.root.minsize(1100, 700)
         self.root.state("zoomed")
+        icon_file = icon_path()
+        if icon_file:
+            try:
+                self.root.iconbitmap(str(icon_file))
+            except tk.TclError:
+                pass
         IMAGE_DIR.mkdir(exist_ok=True)
         self.data = {
             "condominios": {},
@@ -60,6 +142,7 @@ class RelatorioFotograficoApp:
         self.build_ui()
         self.refresh_condominios()
         self.root.after(AUTOSAVE_MS, self.autosave)
+        self.schedule_update_check()
 
     def load_data(self):
         if DATA_FILE.exists():
@@ -153,6 +236,14 @@ class RelatorioFotograficoApp:
     def set_last_action(self, message):
         self.last_action_var.set(message)
 
+    def schedule_update_check(self):
+        try:
+            from atualizacao import iniciar_verificacao_atualizacao
+
+            iniciar_verificacao_atualizacao(self.root, APP_VERSION)
+        except ImportError:
+            pass
+
     def build_ui(self):
         self.setup_styles()
 
@@ -172,6 +263,7 @@ class RelatorioFotograficoApp:
 
         ttk.Button(top_frame, text="Adicionar", command=self.add_condominio, style="Add.TButton").pack(side="left", padx=4)
         ttk.Button(top_frame, text="Excluir", command=self.delete_condominio, style="Delete.TButton").pack(side="left", padx=4)
+        ttk.Label(top_frame, text=f"v{APP_VERSION}", foreground="#666666").pack(side="right", padx=(8, 0))
 
         self.main_frame = ttk.Frame(self.root, padding=(10, 10, 10, 10))
         self.main_frame.pack(fill="both", expand=True)
@@ -215,7 +307,7 @@ class RelatorioFotograficoApp:
         current_frame = ttk.Frame(section_labelframe)
         current_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         ttk.Label(current_frame, text="Etapa atual:").pack(side="left")
-        self.current_section_font = tkfont.Font(weight="bold")
+        self.current_section_font = tkfont.Font(size=11, weight="bold")
         self.current_section_label = ttk.Label(
             current_frame,
             text="Nenhuma etapa",
