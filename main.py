@@ -5,6 +5,7 @@ import sys
 import uuid
 import time
 from pathlib import Path
+from typing import Callable, Protocol, cast
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -18,6 +19,20 @@ DEFAULT_ANOMALIAS = [
     "ERRO. Consultar Léo para arquivo com todas as anomalias",
     "Acrescentar aqui as anomalias que faltam",
 ]
+
+
+class _TkinterDnDDropTarget(Protocol):
+    """Métodos adicionados pelo tkdnd em widgets quando a janela usa TkinterDnD.Tk()."""
+
+    def drop_target_register(self, format: object) -> str: ...
+
+    def dnd_bind(
+        self,
+        sequence: str,
+        func: Callable[..., object],
+        /,
+        *args: object,
+    ) -> str: ...
 
 
 class RelatorioFotograficoApp:
@@ -281,7 +296,7 @@ class RelatorioFotograficoApp:
         ttk.Label(
             list_mgmt,
             text="Gerenciar lista de anomalias:",
-            font=(None, 8),
+            font=tkfont.Font(size=8),
         ).pack(fill="x", pady=(0, 2))
         list_actions = ttk.Frame(list_mgmt)
         list_actions.pack(fill="x")
@@ -458,8 +473,9 @@ class RelatorioFotograficoApp:
                 parent=self.root,
             )
             return
-        self.drop_zone_label.drop_target_register(DND_FILES)
-        self.drop_zone_label.dnd_bind("<<Drop>>", self._on_dnd_drop)
+        drop_zone = cast(_TkinterDnDDropTarget, self.drop_zone_label)
+        drop_zone.drop_target_register(DND_FILES)
+        drop_zone.dnd_bind("<<Drop>>", self._on_dnd_drop)
 
     def _on_dnd_drop(self, event):
         paths = [str(path) for path in self.root.tk.splitlist(event.data)]
@@ -504,13 +520,13 @@ class RelatorioFotograficoApp:
         self.condo_combo["values"] = condos
         current = self.data.get("current_condominio")
         if current in condos:
-            self.condo_var.set(current)
+            self.condo_var.set(str(current))
             self.select_condominio()
         elif condos:
-            self.condo_var.set(condos[0])
+            self.condo_var.set(str(condos[0]))
             self.select_condominio()
         else:
-            self.condo_var.set("")
+            self.condo_var.set(str("Nenhum condomínio selecionado"))
             self.current_cond = None
             self.current_section_index = 0
             self.update_current_section_label()
