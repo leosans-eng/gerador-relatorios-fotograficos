@@ -13,7 +13,7 @@ from PIL import Image, ImageGrab, ImageTk
 
 from app_paths import app_dir, icon_path
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 APP_ROOT = app_dir()
 DATA_FILE = APP_ROOT / "condominios.json"
 ANOMALY_FILE = APP_ROOT / "anomalias.json"
@@ -1057,6 +1057,60 @@ class RelatorioFotograficoApp:
         photo_ids = self.get_selected_photo_ids()
         return photo_ids[0] if photo_ids else None
 
+    def iter_photo_ids_in_display_order(self):
+        if not self.current_cond:
+            return []
+        photo_ids = []
+        for section in self.current_cond.get("sections", []):
+            for photo in section.get("photos", []):
+                photo_ids.append(photo["id"])
+        return photo_ids
+
+    def get_next_photo_id(self, current_photo_id):
+        photo_ids = self.iter_photo_ids_in_display_order()
+        if not photo_ids:
+            return None
+        if current_photo_id not in photo_ids:
+            return photo_ids[0]
+        next_index = photo_ids.index(current_photo_id) + 1
+        if next_index < len(photo_ids):
+            return photo_ids[next_index]
+        return None
+
+    def focus_photo_for_anomaly_entry(self, photo_id, *, clear_anomaly_field=True):
+        parent_id = self.tree.parent(photo_id)
+        index = self.section_id_to_index(parent_id)
+        if index is not None and index != self.current_section_index:
+            self.current_section_index = index
+            self.update_current_section_label()
+            self.apply_active_section_highlight()
+
+        self._handling_tree_select = True
+        try:
+            self.tree.selection_set(photo_id)
+            self.tree.focus(photo_id)
+            self.tree.see(photo_id)
+            self.load_photo_preview(photo_id)
+            if clear_anomaly_field:
+                self.anomaly_var.set("")
+            self.refresh_anomaly_combo()
+            self.anomaly_combo.focus_set()
+        finally:
+            self._handling_tree_select = False
+
+    def advance_to_next_photo_after_anomaly(self, current_photo_id):
+        next_id = self.get_next_photo_id(current_photo_id)
+        if next_id:
+            self.focus_photo_for_anomaly_entry(next_id)
+            photo = self.find_photo_by_id(next_id)
+            order = photo["order"] if photo else "?"
+            self.set_last_action(f"Foto #{order}: informe a anomalia e pressione Enter.")
+        else:
+            self.anomaly_var.set("")
+            self.refresh_anomaly_combo()
+            self.anomaly_combo.focus_set()
+            self.set_last_action("Última foto do relatório — anomalia salva.")
+
     def on_tree_delete_key(self, event):
         self.delete_selected_photo()
         return "break"
@@ -1150,21 +1204,21 @@ class RelatorioFotograficoApp:
             )
             return
         self.anomaly_var.set(resolved)
-        self.save_anomaly()
+        self.save_anomaly(advance_to_next=True)
 
-    def save_anomaly(self):
+    def save_anomaly(self, *, advance_to_next=False):
         item_id = self.get_focused_photo_id()
         if not item_id:
             messagebox.showwarning("Atenção", "Selecione a foto para associar uma anomalia.")
-            return
+            return False
         photo = self.find_photo_by_id(item_id)
         if not photo:
             messagebox.showwarning("Atenção", "Selecione uma foto válida.")
-            return
+            return False
         typed = self.anomaly_var.get().strip()
         if not typed:
             messagebox.showwarning("Atenção", "Selecione uma anomalia antes de salvar.")
-            return
+            return False
         anomaly_name = self.resolve_anomaly_name(typed)
         if not anomaly_name:
             messagebox.showwarning(
@@ -1173,7 +1227,7 @@ class RelatorioFotograficoApp:
                 "Digite mais letras ou escolha um item da lista.",
                 parent=self.root,
             )
-            return
+            return False
         self.anomaly_var.set(anomaly_name)
         photo["anomaly"] = anomaly_name
         self.save_data()
@@ -1181,11 +1235,14 @@ class RelatorioFotograficoApp:
         self.tree.selection_set(item_id)
         self.anomaly_combo["values"] = self.anomalias
         self.set_last_action(f"Foto {photo['order']} - {anomaly_name}")
+        if advance_to_next:
+            self.advance_to_next_photo_after_anomaly(item_id)
+        return True
 
     def assign_selected_anomaly(self):
         if not self.tree.selection():
             return
-        self.save_anomaly()
+        self.save_anomaly(advance_to_next=False)
 
     def paste_image(self):
         if not self.current_cond:
