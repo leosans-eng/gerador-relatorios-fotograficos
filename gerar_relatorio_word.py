@@ -27,7 +27,7 @@ PHOTOS_PER_TABLE = 12
 TABLE_COLS = 2
 IMAGE_WIDTH = Emu(2667000)
 IMAGE_HEIGHT = Emu(1917700)
-_KEEP_BODY_PREFIX = 3  # ÍNDICE, sumário (sdt) e quebra de página após o índice
+_KEEP_BODY_PREFIX = 4  # espaço da capa, ÍNDICE, sumário (sdt) e quebra após o índice
 
 
 def resolve_template_path() -> Path:
@@ -99,6 +99,11 @@ def _set_image(paragraph, image_path: Path):
     run.add_picture(str(image_path), width=IMAGE_WIDTH, height=IMAGE_HEIGHT)
 
 
+def _clear_photo_cell(cell):
+    for paragraph in cell.paragraphs:
+        _clear_paragraph(paragraph)
+
+
 def _fill_photo_cell(cell, image_path: Path, photo_number: int, anomaly: str):
     if len(cell.paragraphs) < 2:
         raise ValueError("Célula do modelo não possui estrutura esperada (imagem + legenda).")
@@ -108,10 +113,14 @@ def _fill_photo_cell(cell, image_path: Path, photo_number: int, anomaly: str):
 
 def _populate_table(table: Table, photos: list[dict]):
     needed_cells = len(photos)
-    for index in range(needed_cells):
+    total_cells = len(table.rows) * TABLE_COLS
+    for index in range(total_cells):
         row = index // TABLE_COLS
         col = index % TABLE_COLS
         cell = table.cell(row, col)
+        if index >= needed_cells:
+            _clear_photo_cell(cell)
+            continue
         photo = photos[index]
         image_path = resolve_image_path(str(photo.get("path", "")))
         if image_path is None:
@@ -211,6 +220,15 @@ def _insert_before_sectpr(doc, element):
     body.insert(list(body).index(sect_pr), element)
 
 
+def _insert_cover_placeholder(doc):
+    """Parágrafo vazio no início do documento para o usuário colar a capa."""
+    body = doc.element.body
+    placeholder = doc.add_paragraph("")
+    placeholder_element = placeholder._element
+    body.remove(placeholder_element)
+    body.insert(0, placeholder_element)
+
+
 def _remove_generated_content(doc):
     body = doc.element.body
     children = list(body)
@@ -239,6 +257,7 @@ def _format_section_heading(section_name: str) -> str:
 def _build_report_body(doc, condominio_data: dict):
     parts = _extract_template_parts(doc)
     template_table = parts["table"]
+    _insert_cover_placeholder(doc)
     _remove_generated_content(doc)
 
     heading1 = parts["heading1"]

@@ -261,8 +261,8 @@ class RelatorioFotograficoApp:
         self.condo_combo.pack(side="left", padx=(5, 5))
         self.condo_combo.bind("<<ComboboxSelected>>", lambda event: self.select_condominio())
 
-        ttk.Button(top_frame, text="Adicionar", command=self.add_condominio, style="Add.TButton").pack(side="left", padx=4)
-        ttk.Button(top_frame, text="Excluir", command=self.delete_condominio, style="Delete.TButton").pack(side="left", padx=4)
+        ttk.Button(top_frame, text="Adicionar condomínio", command=self.add_condominio, style="Add.TButton").pack(side="left", padx=4)
+        ttk.Button(top_frame, text="Excluir condomínio", command=self.delete_condominio, style="Delete.TButton").pack(side="left", padx=4)
         ttk.Label(top_frame, text=f"v{APP_VERSION}", foreground="#666666").pack(side="right", padx=(8, 0))
 
         self.main_frame = ttk.Frame(self.root, padding=(10, 10, 10, 10))
@@ -428,7 +428,7 @@ class RelatorioFotograficoApp:
         row_actions_1 = ttk.Frame(action_frame)
         row_actions_1.pack(fill="x", pady=(0, 4))
         ttk.Button(
-            row_actions_1, text="Excluir", command=self.delete_selected_photo, style="Delete.Compact.TButton"
+            row_actions_1, text="Excluir foto", command=self.delete_selected_photo, style="Delete.Compact.TButton"
         ).pack(side="left", fill="x", expand=True, padx=(0, 2))
         ttk.Button(
             row_actions_1, text="↑ Subir", command=lambda: self.move_photo(-1), style="Compact.TButton"
@@ -768,8 +768,8 @@ class RelatorioFotograficoApp:
             if extra > 0:
                 lines.append(f"• ... e mais {extra} foto(s).")
             messagebox.showerror(
-                "Anomalias obrigatórias",
-                "Todas as fotos precisam ter uma anomalia selecionada antes de gerar o Word.\n\n"
+                "Fotos sem anomalia selecionada",
+                "Todas as fotos precisam ter uma anomalia selecionada antes de gerar o Word. Verificar as fotos abaixo:\n\n"
                 + "\n".join(lines),
                 parent=self.root,
             )
