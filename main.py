@@ -295,17 +295,8 @@ class RelatorioFotograficoApp:
             row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0)
         )
 
-        navigation = ttk.Frame(section_labelframe)
-        navigation.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        ttk.Button(navigation, text="Anterior", command=self.goto_previous_section, style="Compact.TButton").pack(
-            side="left", expand=True, fill="x"
-        )
-        ttk.Button(navigation, text="Próxima", command=self.goto_next_section, style="Compact.TButton").pack(
-            side="left", expand=True, fill="x", padx=(5, 0)
-        )
-
         current_frame = ttk.Frame(section_labelframe)
-        current_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        current_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         ttk.Label(current_frame, text="Etapa atual:").pack(side="left")
         self.current_section_font = tkfont.Font(size=11, weight="bold")
         self.current_section_label = ttk.Label(
@@ -315,15 +306,61 @@ class RelatorioFotograficoApp:
         )
         self.current_section_label.pack(side="left", padx=(5, 0))
 
-        ttk.Button(section_labelframe, text="Reordenar fotos", command=self.refresh_tree, style="Compact.TButton").grid(
-            row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0)
+        edit_section_frame = ttk.LabelFrame(left, text="Editar Etapa (Bloco)", padding=8)
+        edit_section_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(
+            edit_section_frame,
+            text="Clique na etapa na Estrutura do Relatório para selecioná-la antes de editar.",
+            wraplength=210,
+        ).pack(fill="x")
+        ttk.Button(
+            edit_section_frame,
+            text="Renomear etapa atual",
+            command=self.rename_current_section,
+            style="Compact.TButton",
+        ).pack(fill="x", pady=(8, 0))
+        section_order_actions = ttk.Frame(edit_section_frame)
+        section_order_actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(
+            section_order_actions,
+            text="↑ Subir etapa",
+            command=lambda: self.move_current_section(-1),
+            style="Compact.TButton",
+        ).pack(side="left", fill="x", expand=True, padx=(0, 2))
+        ttk.Button(
+            section_order_actions,
+            text="↓ Descer etapa",
+            command=lambda: self.move_current_section(1),
+            style="Compact.TButton",
+        ).pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        move_frame = ttk.LabelFrame(left, text="Mover fotos entre etapas", padding=8)
+        move_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(
+            move_frame,
+            text="Selecione as fotos na Estrutura do Relatório e escolha a etapa/bloco de destino.",
+            wraplength=210,
+        ).pack(fill="x")
+        self.move_section_var = tk.StringVar()
+        self.move_section_combo = ttk.Combobox(
+            move_frame,
+            textvariable=self.move_section_var,
+            state="readonly",
+            width=28,
         )
+        self.move_section_combo.pack(fill="x", pady=(8, 0))
+        ttk.Button(
+            move_frame,
+            text="Mover fotos selecionadas",
+            command=self.move_photos_to_section,
+            style="Compact.TButton",
+        ).pack(fill="x", pady=(8, 0))
 
     def build_center_panel(self):
         center = ttk.Frame(self.main_frame, width=520)
         center.pack(side="left", fill="both", expand=True, padx=(10, 10))
 
-        tree_frame = ttk.LabelFrame(center, text="Estrutura do relatório", padding=10)
+        tree_frame = ttk.LabelFrame(center, text="Estrutura do Relatório", padding=10)
         tree_frame.pack(fill="both", expand=True)
 
         columns = ("num", "anomaly", "file")
@@ -625,6 +662,7 @@ class RelatorioFotograficoApp:
             self.current_section_index = 0
             self.update_current_section_label()
             self.tree.delete(*self.tree.get_children())
+            self.refresh_move_section_targets()
 
     def select_condominio(self):
         name = self.condo_var.get().strip()
@@ -841,6 +879,60 @@ class RelatorioFotograficoApp:
         self.preview_image = None
         self.set_last_action(f"Bloco '{section_name}' excluído.")
 
+    def rename_current_section(self):
+        if not self.current_cond:
+            return
+        sections = self.current_cond.get("sections", [])
+        if not sections:
+            messagebox.showwarning("Atenção", "Não há etapas para renomear.", parent=self.root)
+            return
+        section = sections[self.current_section_index]
+        old_name = section["name"]
+        new_name = simpledialog.askstring(
+            "Renomear etapa",
+            "Novo nome da etapa:",
+            initialvalue=old_name,
+            parent=self.root,
+        )
+        if not new_name:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == old_name:
+            return
+        if any(item["name"] == new_name for item in sections):
+            messagebox.showwarning("Atenção", "Já existe uma etapa com esse nome.", parent=self.root)
+            return
+        if old_name in self.collapsed_section_names:
+            self.collapsed_section_names.discard(old_name)
+            self.collapsed_section_names.add(new_name)
+        section["name"] = new_name
+        self.save_data()
+        self.refresh_tree()
+        self.focus_current_section_in_tree()
+        self.set_last_action(f"Bloco renomeado de '{old_name}' para '{new_name}'.")
+
+    def move_current_section(self, direction):
+        if not self.current_cond:
+            return
+        sections = self.current_cond.get("sections", [])
+        if not sections:
+            return
+        index = self.current_section_index
+        target = index + direction
+        if target < 0 or target >= len(sections):
+            return
+        sections[index], sections[target] = sections[target], sections[index]
+        self.current_section_index = target
+        self.renumber_photos()
+        self.save_data()
+        self.refresh_tree()
+        self.focus_current_section_in_tree()
+        section_name = sections[self.current_section_index]["name"]
+        if direction < 0:
+            self.set_last_action(f"Bloco '{section_name}' movido para cima.")
+        else:
+            self.set_last_action(f"Bloco '{section_name}' movido para baixo.")
+
     def on_tree_section_open(self, event):
         item = self.tree.focus()
         if not item or not str(item).startswith("section-"):
@@ -907,26 +999,6 @@ class RelatorioFotograficoApp:
         finally:
             self._handling_tree_select = False
 
-    def goto_previous_section(self):
-        if not self.current_cond:
-            return
-        if self.current_section_index > 0:
-            self.set_active_section(
-                self.current_section_index - 1,
-                focus_tree=True,
-                clear_preview=True,
-            )
-
-    def goto_next_section(self):
-        if not self.current_cond:
-            return
-        if self.current_section_index < len(self.current_cond["sections"]) - 1:
-            self.set_active_section(
-                self.current_section_index + 1,
-                focus_tree=True,
-                clear_preview=True,
-            )
-
     def update_current_section_label(self):
         if not self.current_cond:
             self.current_section_label.config(text="Nenhum condomínio")
@@ -964,6 +1036,20 @@ class RelatorioFotograficoApp:
                     tags=("photo",),
                 )
         self.update_current_section_label()
+        self.refresh_move_section_targets()
+
+    def refresh_move_section_targets(self):
+        if not hasattr(self, "move_section_combo"):
+            return
+        if not self.current_cond:
+            self.move_section_combo["values"] = []
+            self.move_section_var.set("")
+            return
+        section_names = [section["name"] for section in self.current_cond.get("sections", [])]
+        self.move_section_combo["values"] = section_names
+        current = self.move_section_var.get()
+        if current not in section_names:
+            self.move_section_var.set(section_names[0] if section_names else "")
 
     def get_flat_photos(self):
         photos = []
@@ -1329,6 +1415,74 @@ class RelatorioFotograficoApp:
                         self.refresh_tree()
                         self.tree.selection_set(item_id)
                     return
+
+    def move_photos_to_section(self):
+        photo_ids = self.get_selected_photo_ids()
+        if not photo_ids:
+            messagebox.showwarning(
+                "Atenção",
+                "Selecione uma ou mais fotos na Estrutura do Relatório para mover.",
+                parent=self.root,
+            )
+            return
+        if not self.current_cond:
+            return
+        sections = self.current_cond.get("sections", [])
+        if not sections:
+            messagebox.showwarning("Atenção", "Não há etapas disponíveis.", parent=self.root)
+            return
+        target_name = self.move_section_var.get().strip()
+        if not target_name:
+            messagebox.showwarning("Atenção", "Selecione a etapa de destino.", parent=self.root)
+            return
+        target_section = next((section for section in sections if section["name"] == target_name), None)
+        if target_section is None:
+            messagebox.showwarning("Atenção", "Etapa de destino inválida.", parent=self.root)
+            return
+        photo_id_set = set(photo_ids)
+        photos_to_move = []
+        for photo_id in self.iter_photo_ids_in_display_order():
+            if photo_id in photo_id_set:
+                photo = self.find_photo_by_id(photo_id)
+                if photo:
+                    photos_to_move.append(photo)
+        if not photos_to_move:
+            return
+        source_names = {
+            section["name"]
+            for section in sections
+            for photo in section.get("photos", [])
+            if photo["id"] in photo_id_set
+        }
+        if source_names == {target_name}:
+            messagebox.showinfo(
+                "Atenção",
+                f"As fotos selecionadas já estão na etapa '{target_name}'.",
+                parent=self.root,
+            )
+            return
+        for section in sections:
+            section["photos"] = [photo for photo in section.get("photos", []) if photo["id"] not in photo_id_set]
+        target_section["photos"].extend(photos_to_move)
+        self.renumber_photos()
+        self.save_data()
+        self.refresh_tree()
+        self._handling_tree_select = True
+        try:
+            self.tree.selection_set(photo_ids)
+            self.tree.focus(photo_ids[0])
+            self.tree.see(photo_ids[0])
+            self.load_photo_preview(photo_ids[0])
+        finally:
+            self._handling_tree_select = False
+        moved_orders = [photo["order"] for photo in photos_to_move]
+        count = len(photos_to_move)
+        if count == 1:
+            self.set_last_action(f"Foto {moved_orders[0]} movida para '{target_name}'.")
+        else:
+            self.set_last_action(
+                f"Fotos {min(moved_orders)} a {max(moved_orders)} movidas para '{target_name}'."
+            )
 
     def get_section_name_by_photo_id(self, photo_id):
         if not self.current_cond:
