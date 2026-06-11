@@ -282,21 +282,15 @@ class RelatorioFotograficoApp:
         section_labelframe = ttk.LabelFrame(left, text="Adicionar Etapa (Bloco)", padding=8)
         section_labelframe.pack(fill="x", pady=(0, 10))
 
-        ttk.Label(
-            section_labelframe,
-            text="Digite o nome completo da etapa ao adicionar (exemplo: Torre A, Portaria, Bloco 1)",
-            wraplength=210,
-        ).grid(row=0, column=0, columnspan=3, sticky="w")
-
-        ttk.Button(section_labelframe, text="Adicionar etapa", command=self.add_section, style="Add.Compact.TButton").grid(
-            row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0)
+        ttk.Button(section_labelframe, text="Adicionar etapa", command=self.add_section, style="Add.Compact.TButton").pack(
+            fill="x", pady=(8, 0)
         )
-        ttk.Button(section_labelframe, text="Excluir etapa atual", command=self.delete_current_section, style="Delete.Compact.TButton").grid(
-            row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0)
+        ttk.Button(section_labelframe, text="Excluir etapa atual", command=self.delete_current_section, style="Delete.Compact.TButton").pack(
+            fill="x", pady=(8, 0)
         )
 
         current_frame = ttk.Frame(section_labelframe)
-        current_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        current_frame.pack(fill="x", pady=(10, 0))
         ttk.Label(current_frame, text="Etapa atual:").pack(side="left")
         self.current_section_font = tkfont.Font(size=11, weight="bold")
         self.current_section_label = ttk.Label(
@@ -308,14 +302,9 @@ class RelatorioFotograficoApp:
 
         edit_section_frame = ttk.LabelFrame(left, text="Editar Etapa (Bloco)", padding=8)
         edit_section_frame.pack(fill="x", pady=(0, 10))
-        ttk.Label(
-            edit_section_frame,
-            text="Clique na etapa na Estrutura do Relatório para selecioná-la antes de editar.",
-            wraplength=210,
-        ).pack(fill="x")
         ttk.Button(
             edit_section_frame,
-            text="Renomear etapa atual",
+            text="Renomear etapa (Bloco) atual",
             command=self.rename_current_section,
             style="Compact.TButton",
         ).pack(fill="x", pady=(8, 0))
