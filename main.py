@@ -683,7 +683,7 @@ class RelatorioFotograficoApp:
             return
         name = simpledialog.askstring(
             "Nova seção",
-            "Nome da nova seção (ex: 1, Torre A, Portaria):",
+            "Nome da nova seção (ex: Torre A, Portaria, Bloco 1):",
             parent=self.root,
         )
         if not name:
@@ -1104,12 +1104,10 @@ class RelatorioFotograficoApp:
             self.focus_photo_for_anomaly_entry(next_id)
             photo = self.find_photo_by_id(next_id)
             order = photo["order"] if photo else "?"
-            self.set_last_action(f"Foto #{order}: informe a anomalia e pressione Enter.")
         else:
             self.anomaly_var.set("")
             self.refresh_anomaly_combo()
             self.anomaly_combo.focus_set()
-            self.set_last_action("Última foto do relatório — anomalia salva.")
 
     def on_tree_delete_key(self, event):
         self.delete_selected_photo()
