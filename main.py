@@ -918,9 +918,9 @@ class RelatorioFotograficoApp:
         self.focus_current_section_in_tree()
         section_name = sections[self.current_section_index]["name"]
         if direction < 0:
-            self.set_last_action(f"Bloco '{section_name}' movido para cima.")
+            self.set_last_action(f"Etapa '{section_name}' movido para cima.")
         else:
-            self.set_last_action(f"Bloco '{section_name}' movido para baixo.")
+            self.set_last_action(f"Etapa '{section_name}' movido para baixo.")
 
     def on_tree_section_open(self, event):
         item = self.tree.focus()
@@ -1105,10 +1105,10 @@ class RelatorioFotograficoApp:
             if photo:
                 added_orders.append(photo["order"])
         if len(added_orders) == 1:
-            self.set_last_action(f"Foto {added_orders[0]} inserida no bloco '{section['name']}'.")
+            self.set_last_action(f"Foto {added_orders[0]} inserida na etapa '{section['name']}'.")
         elif added_orders:
             self.set_last_action(
-                f"Fotos {min(added_orders)} a {max(added_orders)} inseridas no bloco '{section['name']}'."
+                f"Fotos {min(added_orders)} a {max(added_orders)} inseridas na etapa '{section['name']}'."
             )
 
     def ensure_current_section(self):

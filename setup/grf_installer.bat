@@ -5,7 +5,7 @@ cd /d "%~dp0.."
 
 set "PYTHON=.venv\Scripts\python.exe"
 if not exist "%PYTHON%" (
-    echo Ambiente virtual nao encontrado. Crie com: python -m venv .venv
+    echo Ambiente virtual nao encontrado.
     exit /b 1
 )
 
