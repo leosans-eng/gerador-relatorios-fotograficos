@@ -840,23 +840,150 @@ class RelatorioFotograficoApp:
         self.refresh_condominios()
         self.set_last_action(f"Condomínio '{new_name}' atualizado.")
 
+    def iter_condominio_photo_paths(self, condo_data):
+        for section in condo_data.get("sections", []):
+            for photo in section.get("photos", []):
+                path_str = str(photo.get("path", "")).strip()
+                if path_str:
+                    yield path_str
+
+    def resolve_managed_image_path(self, path_str: str) -> Path | None:
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = APP_ROOT / path
+        try:
+            resolved = path.resolve()
+            if resolved.is_file():
+                resolved.relative_to(IMAGE_DIR.resolve())
+                return resolved
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def is_managed_photo_path_in_use(self, path: Path, exclude_condo_name: str) -> bool:
+        for condo_name, condo_data in self.data["condominios"].items():
+            if condo_name == exclude_condo_name:
+                continue
+            for path_str in self.iter_condominio_photo_paths(condo_data):
+                managed = self.resolve_managed_image_path(path_str)
+                if managed == path:
+                    return True
+        return False
+
+    def delete_condominio_image_files(self, condo_name: str, condo_data: dict) -> int:
+        deleted = 0
+        seen_paths: set[Path] = set()
+        for path_str in self.iter_condominio_photo_paths(condo_data):
+            managed = self.resolve_managed_image_path(path_str)
+            if managed is None or managed in seen_paths:
+                continue
+            seen_paths.add(managed)
+            if self.is_managed_photo_path_in_use(managed, condo_name):
+                continue
+            try:
+                managed.unlink()
+                deleted += 1
+            except OSError:
+                pass
+        return deleted
+
+    def confirm_delete_condominio(self, name: str) -> bool:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Excluir condomínio")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        result = {"confirmed": False}
+        seconds_left = 5
+        timer_id: list[str | None] = [None]
+
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            frame,
+            text=(
+                f"Deseja realmente excluir o condomínio '{name}'?\n\n"
+                "Todas as etapas, fotos e imagens armazenadas pelo aplicativo "
+                "serão apagadas.\nEsta ação não pode ser desfeita."
+            ),
+            wraplength=380,
+            justify="center",
+        ).pack(pady=(0, 12))
+
+        countdown_var = tk.StringVar(value=f"Aguarde {seconds_left}s para confirmar...")
+        ttk.Label(frame, textvariable=countdown_var, foreground="#c62828").pack(pady=(0, 12))
+
+        button_frame = ttk.Frame(frame)
+        button_frame.pack(fill="x")
+
+        def cancel():
+            if timer_id[0] is not None:
+                dialog.after_cancel(timer_id[0])
+            dialog.destroy()
+
+        def confirm():
+            result["confirmed"] = True
+            cancel()
+
+        confirm_button = ttk.Button(
+            button_frame,
+            text="Excluir condomínio",
+            command=confirm,
+            state="disabled",
+            style="Delete.TButton",
+        )
+        ttk.Button(button_frame, text="Cancelar", command=cancel).pack(side="right", padx=(6, 0))
+        confirm_button.pack(side="right")
+
+        def tick():
+            nonlocal seconds_left
+            seconds_left -= 1
+            if seconds_left > 0:
+                countdown_var.set(f"Aguarde {seconds_left}s para confirmar...")
+                timer_id[0] = dialog.after(1000, tick)
+            else:
+                countdown_var.set("")
+                confirm_button.config(state="normal")
+
+        timer_id[0] = dialog.after(1000, tick)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        dialog.update_idletasks()
+        dialog.geometry(
+            f"+{self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog.winfo_width()) // 2)}"
+            f"+{self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_height()) // 2)}"
+        )
+
+        self.root.wait_window(dialog)
+        return bool(result["confirmed"])
+
     def delete_condominio(self):
         if not self.current_cond:
             return
         name = self.data.get("current_condominio")
         if not name:
             return
-        answer = messagebox.askyesno(
-            "Excluir condomínio",
-            f"Deseja realmente excluir o condomínio {name}? Esta ação não pode ser desfeita.",
-        )
-        if answer:
-            self.data["condominios"].pop(name, None)
-            if self.data.get("current_condominio") == name:
-                self.data["current_condominio"] = None
-            self.save_data()
-            self.current_cond = None
-            self.refresh_condominios()
+        condo_data = self.data["condominios"].get(name)
+        if not condo_data:
+            return
+        if not self.confirm_delete_condominio(name):
+            return
+        deleted_images = self.delete_condominio_image_files(name, condo_data)
+        self.data["condominios"].pop(name, None)
+        if self.data.get("current_condominio") == name:
+            self.data["current_condominio"] = None
+        self.save_data()
+        self.current_cond = None
+        self.preview_label.config(image="", text="Selecione uma foto para ver o preview.")
+        self.preview_image = None
+        self.refresh_condominios()
+        if deleted_images:
+            self.set_last_action(
+                f"Condomínio '{name}' excluído ({deleted_images} imagem(ns) apagada(s))."
+            )
+        else:
             self.set_last_action(f"Condomínio '{name}' excluído.")
 
     def add_section(self):
