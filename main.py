@@ -135,6 +135,7 @@ class RelatorioFotograficoApp:
         self.anomalias = []
         self.collapsed_section_names = set()
         self._handling_tree_select = False
+        self._condo_label_to_name = {}
         self.last_action_var = tk.StringVar(value="Nenhuma ação registrada.")
 
         self.load_data()
@@ -649,18 +650,48 @@ class RelatorioFotograficoApp:
             return
         self.add_photos(valid_paths)
 
+    def format_condominio_display(self, name: str) -> str:
+        condo_data = self.data["condominios"].get(name, {})
+        uf = str(condo_data.get("uf", "")).strip().upper()
+        cidade = str(condo_data.get("cidade", "")).strip()
+        if uf or cidade:
+            location = f"{uf}-{cidade}"
+        else:
+            location = "—"
+        return f"{location} | {name}"
+
+    def condominio_name_from_display(self, display: str) -> str | None:
+        display = display.strip()
+        if not display or display == "Nenhum condomínio selecionado":
+            return None
+        mapped = self._condo_label_to_name.get(display)
+        if mapped:
+            return mapped
+        if " | " in display:
+            candidate = display.rsplit(" | ", 1)[1].strip()
+            if candidate in self.data["condominios"]:
+                return candidate
+        if display in self.data["condominios"]:
+            return display
+        return None
+
     def refresh_condominios(self):
-        condos = sorted(self.data["condominios"].keys())
-        self.condo_combo["values"] = condos
+        condos = sorted(
+            self.data["condominios"].keys(),
+            key=lambda name: self.format_condominio_display(name).casefold(),
+        )
+        labels = [self.format_condominio_display(name) for name in condos]
+        self._condo_label_to_name = dict(zip(labels, condos))
+        self.condo_combo["values"] = labels
         current = self.data.get("current_condominio")
-        if current in condos:
-            self.condo_var.set(str(current))
+        if current and current in condos:
+            self.condo_var.set(self.format_condominio_display(current))
             self.select_condominio()
         elif condos:
-            self.condo_var.set(str(condos[0]))
+            self.condo_var.set(self.format_condominio_display(condos[0]))
             self.select_condominio()
         else:
-            self.condo_var.set(str("Nenhum condomínio selecionado"))
+            self.condo_var.set("Nenhum condomínio selecionado")
             self.current_cond = None
             self.current_section_index = 0
             self.update_current_section_label()
@@ -743,7 +774,7 @@ class RelatorioFotograficoApp:
         return str(result["name"]), str(result["cidade"]), str(result["uf"])
 
     def select_condominio(self):
-        name = self.condo_var.get().strip()
+        name = self.condominio_name_from_display(self.condo_var.get())
         if not name:
             return
         self.data["current_condominio"] = name
@@ -777,15 +808,13 @@ class RelatorioFotograficoApp:
         self.data["current_condominio"] = name
         self.save_data()
         self.refresh_condominios()
-        self.condo_var.set(name)
-        self.select_condominio()
         self.set_last_action(f"Condomínio '{name}' criado.")
 
     def edit_condominio(self):
         if not self.current_cond:
             messagebox.showwarning("Atenção", "Selecione um condomínio para editar.", parent=self.root)
             return
-        old_name = self.condo_var.get().strip()
+        old_name = self.data.get("current_condominio")
         if not old_name:
             return
         details = self.prompt_condominio_details(
@@ -809,14 +838,12 @@ class RelatorioFotograficoApp:
             self.data["current_condominio"] = new_name
         self.save_data()
         self.refresh_condominios()
-        self.condo_var.set(new_name)
-        self.select_condominio()
         self.set_last_action(f"Condomínio '{new_name}' atualizado.")
 
     def delete_condominio(self):
         if not self.current_cond:
             return
-        name = self.condo_var.get()
+        name = self.data.get("current_condominio")
         if not name:
             return
         answer = messagebox.askyesno(
@@ -911,7 +938,7 @@ class RelatorioFotograficoApp:
             messagebox.showwarning("Aviso", "Selecione um condomínio antes de gerar o relatório.")
             return
 
-        condo_name = self.condo_var.get().strip()
+        condo_name = self.data.get("current_condominio") or self.condominio_name_from_display(self.condo_var.get()) or ""
         missing = self.find_photos_without_anomaly()
         if missing:
             lines = [
