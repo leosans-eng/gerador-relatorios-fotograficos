@@ -208,12 +208,6 @@ def _clone_paragraph_element(
     return element
 
 
-def _clone_page_break_element(template_paragraph):
-    element = deepcopy(template_paragraph._element)
-    _remove_bookmarks(element)
-    return element
-
-
 def _insert_before_sectpr(doc, element):
     body = doc.element.body
     sect_pr = body[-1]
@@ -238,14 +232,71 @@ def _remove_generated_content(doc):
         body.remove(child)
 
 
+def _paragraph_has_page_break(paragraph) -> bool:
+    for br in paragraph._element.findall(f".//{qn('w:br')}"):
+        if br.get(qn("w:type")) == "page":
+            return True
+    return False
+
+
+def _is_heading_style(paragraph, level: int) -> bool:
+    style_name = (paragraph.style.name or "").casefold()
+    targets = {
+        1: ("heading 1", "título 1", "titulo 1"),
+        2: ("heading 2", "título 2", "titulo 2"),
+    }
+    return any(target in style_name for target in targets[level])
+
+
+def _is_empty_normal_paragraph(paragraph) -> bool:
+    if paragraph.text.strip():
+        return False
+    if _paragraph_has_page_break(paragraph):
+        return False
+    style_name = (paragraph.style.name or "Normal").casefold()
+    return "normal" in style_name or style_name == ""
+
+
+def _clone_empty_line_element(template_paragraph):
+    element = deepcopy(template_paragraph._element)
+    _remove_bookmarks(element)
+    _set_element_text(element, "")
+    return element
+
+
 def _extract_template_parts(doc):
-    paragraphs = doc.paragraphs
-    if len(paragraphs) < 7 or not doc.tables:
-        raise ValueError("O modelo Word não possui a estrutura esperada (índice, títulos e tabela).")
+    heading1 = None
+    heading2 = None
+    page_break = None
+    empty_line = None
+
+    for paragraph in doc.paragraphs:
+        if heading1 is None and _is_heading_style(paragraph, 1):
+            heading1 = paragraph
+            continue
+        if heading2 is None and _is_heading_style(paragraph, 2):
+            heading2 = paragraph
+            continue
+        if page_break is None and _paragraph_has_page_break(paragraph) and not paragraph.text.strip():
+            page_break = paragraph
+            continue
+        if empty_line is None and _is_empty_normal_paragraph(paragraph):
+            empty_line = paragraph
+
+    if heading1 is None or heading2 is None or not doc.tables:
+        raise ValueError(
+            "O modelo Word não possui a estrutura esperada "
+            "(título principal, título de bloco e tabela de fotos)."
+        )
+
+    if empty_line is None:
+        empty_line = page_break
+
     return {
-        "heading1": paragraphs[2],
-        "heading2": paragraphs[3],
-        "page_break": paragraphs[5],
+        "heading1": heading1,
+        "heading2": heading2,
+        "page_break": page_break,
+        "empty_line": empty_line,
         "table": doc.tables[0]._tbl,
     }
 
@@ -295,10 +346,10 @@ def _build_report_body(doc, condominio_data: dict):
             table = Table(new_table, doc)
             _populate_table(table, chunk)
 
-        if section_index < len(sections) - 1:
+        if section_index < len(sections) - 1 and parts["empty_line"] is not None:
             _insert_before_sectpr(
                 doc,
-                _clone_page_break_element(parts["page_break"]),
+                _clone_empty_line_element(parts["empty_line"]),
             )
 
 
