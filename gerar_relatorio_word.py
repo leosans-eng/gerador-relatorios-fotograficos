@@ -43,9 +43,11 @@ def sanitize_filename_part(value: str) -> str:
     return cleaned or "SEM-NOME"
 
 
-def default_output_name(condominio_name: str) -> str:
+def default_output_name(condominio_name: str, cidade: str = "", uf: str = "") -> str:
     condo = sanitize_filename_part(condominio_name).upper()
-    return f"2. RELATÓRIO FOTOGRÁFICO-ÁREA COMUM-COND. {condo}-CIDADE-UF.docx"
+    city = sanitize_filename_part(cidade).upper() if cidade.strip() else "CIDADE"
+    state = sanitize_filename_part(uf).upper() if uf.strip() else "UF"
+    return f"2. RELATÓRIO FOTOGRÁFICO-ÁREA COMUM-COND. {condo}-{city}-{state}.docx"
 
 
 def default_downloads_dir() -> Path:
@@ -372,7 +374,11 @@ def gerar_relatorio(
 
     template_path = resolve_template_path()
     if output_path is None:
-        suggested_name = default_output_name(condominio_name)
+        suggested_name = default_output_name(
+            condominio_name,
+            str(condominio_data.get("cidade", "")),
+            str(condominio_data.get("uf", "")),
+        )
         initial_dir = default_downloads_dir()
         if ask_save_path:
             selected = filedialog.asksaveasfilename(

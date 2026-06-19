@@ -262,6 +262,7 @@ class RelatorioFotograficoApp:
         self.condo_combo.bind("<<ComboboxSelected>>", lambda event: self.select_condominio())
 
         ttk.Button(top_frame, text="Adicionar condomínio", command=self.add_condominio, style="Add.TButton").pack(side="left", padx=4)
+        ttk.Button(top_frame, text="Editar condomínio", command=self.edit_condominio, style="Secondary.TButton").pack(side="left", padx=4)
         ttk.Button(top_frame, text="Excluir condomínio", command=self.delete_condominio, style="Delete.TButton").pack(side="left", padx=4)
         ttk.Label(top_frame, text=f"v{APP_VERSION}", foreground="#666666").pack(side="right", padx=(8, 0))
 
@@ -520,6 +521,19 @@ class RelatorioFotograficoApp:
             pressed="#b71c1c",
             padding=(10, 5),
         )
+        style.configure(
+            "Secondary.TButton",
+            background="#eceff1",
+            foreground="#37474f",
+            borderwidth=1,
+            focuscolor="none",
+            padding=(10, 5),
+        )
+        style.map(
+            "Secondary.TButton",
+            background=[("active", "#cfd8dc"), ("pressed", "#b0bec5")],
+            foreground=[("active", "#263238"), ("pressed", "#263238")],
+        )
         self._configure_colored_button_style(
             style,
             "Add.Compact.TButton",
@@ -653,38 +667,151 @@ class RelatorioFotograficoApp:
             self.tree.delete(*self.tree.get_children())
             self.refresh_move_section_targets()
 
+    def normalize_condominio_data(self, condo_data):
+        condo_data.setdefault("sections", [])
+        condo_data.setdefault("cidade", "")
+        condo_data.setdefault("uf", "")
+        return condo_data
+
+    def prompt_condominio_details(
+        self,
+        title,
+        *,
+        initial_name="",
+        initial_cidade="",
+        initial_uf="",
+    ):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        result: dict[str, object] = {"ok": False}
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Nome do condomínio:").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        name_var = tk.StringVar(value=initial_name)
+        name_entry = ttk.Entry(frame, textvariable=name_var, width=42)
+        name_entry.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+
+        ttk.Label(frame, text="Cidade:").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        cidade_var = tk.StringVar(value=initial_cidade)
+        ttk.Entry(frame, textvariable=cidade_var, width=42).grid(row=3, column=0, sticky="ew", pady=(0, 8))
+
+        ttk.Label(frame, text="UF:").grid(row=4, column=0, sticky="w", pady=(0, 4))
+        uf_var = tk.StringVar(value=initial_uf)
+        uf_entry = ttk.Entry(frame, textvariable=uf_var, width=6)
+        uf_entry.grid(row=5, column=0, sticky="w", pady=(0, 12))
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=6, column=0, sticky="e")
+
+        def confirm():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Atenção", "Informe o nome do condomínio.", parent=dialog)
+                name_entry.focus_set()
+                return
+            result["ok"] = True
+            result["name"] = name
+            result["cidade"] = cidade_var.get().strip()
+            result["uf"] = uf_var.get().strip().upper()
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        ttk.Button(button_frame, text="Cancelar", command=cancel).pack(side="right", padx=(6, 0))
+        ttk.Button(button_frame, text="OK", command=confirm).pack(side="right")
+        dialog.bind("<Return>", lambda event: confirm())
+        dialog.bind("<Escape>", lambda event: cancel())
+        name_entry.focus_set()
+        name_entry.selection_range(0, tk.END)
+
+        dialog.update_idletasks()
+        dialog.geometry(
+            f"+{self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog.winfo_width()) // 2)}"
+            f"+{self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_height()) // 2)}"
+        )
+
+        self.root.wait_window(dialog)
+        if not result.get("ok"):
+            return None
+        return str(result["name"]), str(result["cidade"]), str(result["uf"])
+
     def select_condominio(self):
         name = self.condo_var.get().strip()
         if not name:
             return
         self.data["current_condominio"] = name
-        self.current_cond = self.data["condominios"].setdefault(
-            name,
-            {
-                "sections": [],
-            },
+        self.current_cond = self.normalize_condominio_data(
+            self.data["condominios"].setdefault(
+                name,
+                {
+                    "sections": [],
+                    "cidade": "",
+                    "uf": "",
+                },
+            )
         )
         self.current_section_index = 0
         self.save_data()
         self.refresh_tree()
 
     def add_condominio(self):
-        name = simpledialog.askstring("Adicionar condomínio", "Nome do condomínio:", parent=self.root)
-        if not name:
+        details = self.prompt_condominio_details("Adicionar condomínio")
+        if not details:
             return
-        name = name.strip()
-        if not name:
-            return
+        name, cidade, uf = details
         if name in self.data["condominios"]:
-            messagebox.showwarning("Atenção", "Este condomínio já existe.")
+            messagebox.showwarning("Atenção", "Este condomínio já existe.", parent=self.root)
             return
-        self.data["condominios"][name] = {"sections": []}
+        self.data["condominios"][name] = {
+            "sections": [],
+            "cidade": cidade,
+            "uf": uf,
+        }
         self.data["current_condominio"] = name
         self.save_data()
         self.refresh_condominios()
         self.condo_var.set(name)
         self.select_condominio()
         self.set_last_action(f"Condomínio '{name}' criado.")
+
+    def edit_condominio(self):
+        if not self.current_cond:
+            messagebox.showwarning("Atenção", "Selecione um condomínio para editar.", parent=self.root)
+            return
+        old_name = self.condo_var.get().strip()
+        if not old_name:
+            return
+        details = self.prompt_condominio_details(
+            "Editar condomínio",
+            initial_name=old_name,
+            initial_cidade=self.current_cond.get("cidade", ""),
+            initial_uf=self.current_cond.get("uf", ""),
+        )
+        if not details:
+            return
+        new_name, cidade, uf = details
+        if new_name != old_name and new_name in self.data["condominios"]:
+            messagebox.showwarning("Atenção", "Já existe um condomínio com esse nome.", parent=self.root)
+            return
+        condo_data = self.data["condominios"].pop(old_name)
+        self.normalize_condominio_data(condo_data)
+        condo_data["cidade"] = cidade
+        condo_data["uf"] = uf
+        self.data["condominios"][new_name] = condo_data
+        if self.data.get("current_condominio") == old_name:
+            self.data["current_condominio"] = new_name
+        self.save_data()
+        self.refresh_condominios()
+        self.condo_var.set(new_name)
+        self.select_condominio()
+        self.set_last_action(f"Condomínio '{new_name}' atualizado.")
 
     def delete_condominio(self):
         if not self.current_cond:
