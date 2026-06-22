@@ -13,12 +13,14 @@ from PIL import Image, ImageGrab, ImageTk
 
 from app_paths import app_dir, icon_path
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 APP_ROOT = app_dir()
 DATA_FILE = APP_ROOT / "condominios.json"
 ANOMALY_FILE = APP_ROOT / "anomalias.json"
 IMAGE_DIR = APP_ROOT / "imagens"
 AUTOSAVE_MS = 5 * 60 * 1000
+STALE_CONDOMINIO_DAYS = 7
+STORAGE_REVIEW_SNOOZE_DAYS = 7
 DEFAULT_ANOMALIAS = [
     "Armadura exposta",
     "Caixas de inspeção em desacordo à NBR 9050",
@@ -143,22 +145,37 @@ class RelatorioFotograficoApp:
         self.build_ui()
         self.refresh_condominios()
         self.root.after(AUTOSAVE_MS, self.autosave)
+        self.root.after(1200, self.run_storage_maintenance)
         self.schedule_update_check()
 
     def load_data(self):
+        timestamp_now = self.current_timestamp()
+        data_mtime = self.file_timestamp(DATA_FILE)
         if DATA_FILE.exists():
             try:
                 with DATA_FILE.open("r", encoding="utf-8") as handle:
                     self.data = json.load(handle)
                 self.data.setdefault("condominios", {})
                 self.data.setdefault("current_condominio", None)
+                self.data.setdefault("storage_review", {})
             except Exception:
                 messagebox.showwarning(
                     "Aviso", "Não foi possível ler o arquivo de dados. Um novo arquivo será criado."
                 )
-                self.data = {"condominios": {}, "current_condominio": None}
+                self.data = {"condominios": {}, "current_condominio": None, "storage_review": {}}
         else:
-            self.data = {"condominios": {}, "current_condominio": None}
+            self.data = {"condominios": {}, "current_condominio": None, "storage_review": {}}
+        self.data.setdefault("storage_review", {})
+        storage_review = self.data["storage_review"]
+        if not isinstance(storage_review, dict):
+            storage_review = {}
+            self.data["storage_review"] = storage_review
+        storage_review.setdefault("snoozed_until", "")
+        for condo_data in self.data.get("condominios", {}).values():
+            self.normalize_condominio_data(
+                condo_data,
+                default_timestamp=data_mtime or timestamp_now,
+            )
 
     def save_data(self):
         try:
@@ -170,6 +187,127 @@ class RelatorioFotograficoApp:
     def autosave(self):
         self.save_data()
         self.root.after(AUTOSAVE_MS, self.autosave)
+
+    def current_timestamp(self) -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    def file_timestamp(self, path: Path) -> str:
+        try:
+            return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(path.stat().st_mtime))
+        except OSError:
+            return ""
+
+    def timestamp_to_epoch(self, value: str) -> float | None:
+        if not value:
+            return None
+        try:
+            return time.mktime(time.strptime(value, "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            return None
+
+    def days_since_timestamp(self, value: str) -> int | None:
+        epoch = self.timestamp_to_epoch(value)
+        if epoch is None:
+            return None
+        delta = time.time() - epoch
+        if delta < 0:
+            return 0
+        return int(delta // 86400)
+
+    def touch_current_condominio(self):
+        if not self.current_cond:
+            return
+        self.current_cond["updated_at"] = self.current_timestamp()
+
+    def touch_condominio(self, condo_data: dict):
+        condo_data["updated_at"] = self.current_timestamp()
+
+    def list_managed_image_paths(self) -> set[Path]:
+        paths: set[Path] = set()
+        for condo_data in self.data.get("condominios", {}).values():
+            for path_str in self.iter_condominio_photo_paths(condo_data):
+                managed = self.resolve_managed_image_path(path_str)
+                if managed is not None:
+                    paths.add(managed)
+        return paths
+
+    def prune_orphan_managed_images(self) -> int:
+        referenced = self.list_managed_image_paths()
+        deleted = 0
+        for path in IMAGE_DIR.iterdir():
+            if not path.is_file():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved in referenced:
+                continue
+            try:
+                path.unlink()
+                deleted += 1
+            except OSError:
+                pass
+        return deleted
+
+    def get_stale_condominios(self) -> list[tuple[str, dict, int]]:
+        stale = []
+        for name, condo_data in self.data.get("condominios", {}).items():
+            sections = condo_data.get("sections", [])
+            photo_count = sum(len(section.get("photos", [])) for section in sections)
+            if photo_count == 0:
+                continue
+            updated_at = str(condo_data.get("updated_at", "")).strip()
+            inactive_days = self.days_since_timestamp(updated_at)
+            if inactive_days is None or inactive_days < STALE_CONDOMINIO_DAYS:
+                continue
+            stale.append((name, condo_data, inactive_days))
+        stale.sort(key=lambda item: item[2], reverse=True)
+        return stale
+
+    def run_storage_maintenance(self):
+        removed = self.prune_orphan_managed_images()
+        if removed:
+            self.set_last_action(f"Limpeza automática: {removed} imagem(ns) órfã(s) removida(s).")
+        self.maybe_prompt_storage_review()
+
+    def maybe_prompt_storage_review(self):
+        stale = self.get_stale_condominios()
+        if not stale:
+            return
+        storage_review = self.data.setdefault("storage_review", {})
+        snoozed_until = str(storage_review.get("snoozed_until", "")).strip()
+        if snoozed_until:
+            snoozed_epoch = self.timestamp_to_epoch(snoozed_until)
+            if snoozed_epoch is not None and snoozed_epoch > time.time():
+                return
+        sample = []
+        for name, condo_data, inactive_days in stale[:5]:
+            cidade = str(condo_data.get("cidade", "")).strip()
+            uf = str(condo_data.get("uf", "")).strip().upper()
+            location = f"{uf}-{cidade}" if (uf or cidade) else "Local não informado"
+            sample.append(f"• {location} | {name} ({inactive_days} dias sem atividade)")
+        if len(stale) > 5:
+            sample.append(f"• ... e mais {len(stale) - 5} condomínio(s).")
+        message = (
+            "Foram encontrados condomínios sem atividade recente, o que pode acumular fotos no computador.\n\n"
+            + "\n".join(sample)
+            + "\n\nRecomendação: revisar e excluir os condomínios já concluídos."
+            "\n\nDeseja adiar esse lembrete por 7 dias?"
+        )
+        remind_later = messagebox.askyesno(
+            "Revisão de armazenamento",
+            message,
+            parent=self.root,
+        )
+        if remind_later:
+            storage_review["snoozed_until"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%S",
+                time.localtime(time.time() + STORAGE_REVIEW_SNOOZE_DAYS * 86400),
+            )
+        else:
+            storage_review["snoozed_until"] = ""
+        self.save_data()
 
     def load_anomalias(self):
         if ANOMALY_FILE.exists():
@@ -698,10 +836,14 @@ class RelatorioFotograficoApp:
             self.tree.delete(*self.tree.get_children())
             self.refresh_move_section_targets()
 
-    def normalize_condominio_data(self, condo_data):
+    def normalize_condominio_data(self, condo_data, *, default_timestamp=""):
         condo_data.setdefault("sections", [])
         condo_data.setdefault("cidade", "")
         condo_data.setdefault("uf", "")
+        if not default_timestamp:
+            default_timestamp = self.current_timestamp()
+        condo_data.setdefault("created_at", default_timestamp)
+        condo_data.setdefault("updated_at", default_timestamp)
         return condo_data
 
     def prompt_condominio_details(
@@ -785,6 +927,8 @@ class RelatorioFotograficoApp:
                     "sections": [],
                     "cidade": "",
                     "uf": "",
+                    "created_at": self.current_timestamp(),
+                    "updated_at": self.current_timestamp(),
                 },
             )
         )
@@ -804,6 +948,8 @@ class RelatorioFotograficoApp:
             "sections": [],
             "cidade": cidade,
             "uf": uf,
+            "created_at": self.current_timestamp(),
+            "updated_at": self.current_timestamp(),
         }
         self.data["current_condominio"] = name
         self.save_data()
@@ -833,6 +979,7 @@ class RelatorioFotograficoApp:
         self.normalize_condominio_data(condo_data)
         condo_data["cidade"] = cidade
         condo_data["uf"] = uf
+        self.touch_condominio(condo_data)
         self.data["condominios"][new_name] = condo_data
         if self.data.get("current_condominio") == old_name:
             self.data["current_condominio"] = new_name
@@ -1001,6 +1148,7 @@ class RelatorioFotograficoApp:
             return
         self.current_cond["sections"].append({"name": name, "photos": []})
         self.current_section_index = len(self.current_cond["sections"]) - 1
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self.focus_current_section_in_tree()
@@ -1143,6 +1291,7 @@ class RelatorioFotograficoApp:
         elif self.current_section_index >= len(sections):
             self.current_section_index = len(sections) - 1
         self.renumber_photos()
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self.preview_label.config(image="", text="Selecione uma foto para ver o preview.")
@@ -1176,6 +1325,7 @@ class RelatorioFotograficoApp:
             self.collapsed_section_names.discard(old_name)
             self.collapsed_section_names.add(new_name)
         section["name"] = new_name
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self.focus_current_section_in_tree()
@@ -1194,6 +1344,7 @@ class RelatorioFotograficoApp:
         sections[index], sections[target] = sections[target], sections[index]
         self.current_section_index = target
         self.renumber_photos()
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self.focus_current_section_in_tree()
@@ -1369,6 +1520,7 @@ class RelatorioFotograficoApp:
             last_photo_id = photo["id"]
             added_photo_ids.append(photo["id"])
         self.renumber_photos()
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         if last_photo_id:
@@ -1584,6 +1736,7 @@ class RelatorioFotograficoApp:
             return False
         self.anomaly_var.set(anomaly_name)
         photo["anomaly"] = anomaly_name
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self.tree.selection_set(item_id)
@@ -1650,6 +1803,7 @@ class RelatorioFotograficoApp:
                     removed_orders.append(photo["order"])
             section["photos"] = [photo for photo in section["photos"] if photo["id"] not in id_set]
         self.renumber_photos()
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self.preview_label.config(image="", text="Selecione uma foto para ver o preview.")
@@ -1681,6 +1835,7 @@ class RelatorioFotograficoApp:
                     if 0 <= target < len(photos):
                         photos[index], photos[target] = photos[target], photos[index]
                         self.renumber_photos()
+                        self.touch_current_condominio()
                         self.save_data()
                         self.refresh_tree()
                         self.tree.selection_set(item_id)
@@ -1735,6 +1890,7 @@ class RelatorioFotograficoApp:
             section["photos"] = [photo for photo in section.get("photos", []) if photo["id"] not in photo_id_set]
         target_section["photos"].extend(photos_to_move)
         self.renumber_photos()
+        self.touch_current_condominio()
         self.save_data()
         self.refresh_tree()
         self._handling_tree_select = True

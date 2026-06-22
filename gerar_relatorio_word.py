@@ -27,7 +27,7 @@ PHOTOS_PER_TABLE = 12
 TABLE_COLS = 2
 IMAGE_WIDTH = Emu(2667000)
 IMAGE_HEIGHT = Emu(1917700)
-_KEEP_BODY_PREFIX = 4  # espaço da capa, ÍNDICE, sumário (sdt) e quebra após o índice
+_KEEP_BODY_PREFIX = 4  # espaço da capa, ÍNDICE, sumário e quebra após o índice
 
 
 def resolve_template_path() -> Path:

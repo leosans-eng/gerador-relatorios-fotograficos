@@ -179,7 +179,7 @@ Você também pode baixar manualmente a versão mais recente na página de [Rele
 ## Suporte
 
 - **Repositório:** [github.com/leosans-eng/gerador-relatorios-fotograficos](https://github.com/leosans-eng/gerador-relatorios-fotograficos)
-- **Versão atual:** 1.0.7
+- **Versão atual:** 1.0.8
 - **Desenvolvedor:** Léo Santos
 
 Para reportar problemas ou solicitar melhorias, abra uma *issue* no repositório do GitHub, ou contate-me diretamente.
